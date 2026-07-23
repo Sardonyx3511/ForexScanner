@@ -2,13 +2,17 @@ name: Forex Scanner
 
 on:
   schedule:
-    # Draait elke dag om 07:00 UTC (= 08:00 of 09:00 Nederlandse tijd,
-    # afhankelijk van zomer-/wintertijd). Pas de cron aan als je een
-    # ander tijdstip wilt.
-    - cron: "0 7 * * *"
+    # We draaien twee keer rond 23:15 Nederlandse tijd (kort na de
+    # daily candle close): één cron voor wintertijd (UTC+1) en één
+    # voor zomertijd (UTC+2). De stap hieronder ("Tijdcheck") zorgt
+    # ervoor dat alleen de run die op dat moment overeenkomt met
+    # 23:15 Nederlandse tijd het script daadwerkelijk uitvoert.
+    - cron: "15 22 * * *"   # 23:15 CET  (winter, UTC+1)
+    - cron: "15 21 * * *"   # 23:15 CEST (zomer, UTC+2)
   workflow_dispatch:
     # Hiermee kun je de scan ook handmatig starten via de GitHub-website
-    # (tab "Actions" -> "Forex Scanner" -> "Run workflow").
+    # (tab "Actions" -> "Forex Scanner" -> "Run workflow"). Handmatig
+    # starten slaat de tijdcheck over en draait altijd.
 
 jobs:
   run-scanner:
@@ -18,15 +22,28 @@ jobs:
       - name: Repository ophalen
         uses: actions/checkout@v4
 
+      - name: Tijdcheck (alleen doorgaan rond 23:15 NL-tijd, tenzij handmatig gestart)
+        if: github.event_name == 'schedule'
+        run: |
+          NL_HOUR=$(TZ="Europe/Amsterdam" date +%H)
+          echo "Huidige uur in Nederland: $NL_HOUR"
+          if [ "$NL_HOUR" != "23" ]; then
+            echo "Niet het juiste moment voor dit seizoen, run wordt overgeslagen."
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          fi
+
       - name: Python installeren
+        if: env.SKIP != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Dependencies installeren
+        if: env.SKIP != 'true'
         run: pip install -r requirements.txt
 
       - name: Scanner uitvoeren
+        if: env.SKIP != 'true'
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
