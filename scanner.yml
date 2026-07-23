@@ -1,0 +1,33 @@
+name: Forex Scanner
+
+on:
+  schedule:
+    # Draait elke dag om 07:00 UTC (= 08:00 of 09:00 Nederlandse tijd,
+    # afhankelijk van zomer-/wintertijd). Pas de cron aan als je een
+    # ander tijdstip wilt.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    # Hiermee kun je de scan ook handmatig starten via de GitHub-website
+    # (tab "Actions" -> "Forex Scanner" -> "Run workflow").
+
+jobs:
+  run-scanner:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository ophalen
+        uses: actions/checkout@v4
+
+      - name: Python installeren
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Dependencies installeren
+        run: pip install -r requirements.txt
+
+      - name: Scanner uitvoeren
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
