@@ -1,6 +1,8 @@
+import os
 import yfinance as yf
 import ta
 import pandas as pd
+import requests
 from datetime import datetime
 
 
@@ -37,6 +39,47 @@ pairs = [
 "TRYJPY=X","PLNJPY=X"
 ]
 
+
+# ============================================
+# TELEGRAM CONFIG
+# ============================================
+# Token en chat ID komen uit environment variables.
+# Lokaal kun je ze zetten met (PowerShell):
+#   $env:TELEGRAM_TOKEN="123456:ABC..."
+#   $env:TELEGRAM_CHAT_ID="2143382141"
+# In GitHub Actions komen ze uit de repository Secrets.
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+
+def send_telegram_message(text):
+    """Stuurt een bericht naar Telegram. Print een waarschuwing als config ontbreekt."""
+
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️  TELEGRAM_TOKEN of TELEGRAM_CHAT_ID ontbreekt, bericht wordt niet verstuurd.")
+        return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
+    }
+
+    try:
+        response = requests.post(url, data=payload, timeout=15)
+
+        if response.status_code == 200:
+            print("✅ Telegram-bericht verstuurd.")
+        else:
+            print(f"⚠️  Telegram gaf een foutcode terug: {response.status_code}")
+            print(response.text)
+
+    except Exception as e:
+        print(f"⚠️  Versturen naar Telegram mislukt: {e}")
 
 
 def calculate_kst(data):
@@ -269,6 +312,15 @@ print(scan_date)
 print("===================================")
 
 
+# ============================================
+# Bericht opbouwen (console + Telegram)
+# ============================================
+
+message_lines = []
+message_lines.append(f"📱 *DAILY REPORT*")
+message_lines.append(scan_date)
+message_lines.append("")
+
 
 trade=df[df["Status"]=="TRADE WATCH"]
 
@@ -278,6 +330,8 @@ if len(trade)>0:
     print()
     print("🔥 TRADE WATCH")
     print("-----------------------------------")
+
+    message_lines.append("🔥 *TRADE WATCH*")
 
     for _,r in trade.iterrows():
 
@@ -302,16 +356,27 @@ if len(trade)>0:
             "✅ ADX filter"
         )
 
+        message_lines.append("")
+        message_lines.append(f"*{r['Pair']} {r['Entry']}*")
+        message_lines.append(f"ADX {r['ADX']} | Stoch {r['K']}/{r['D']} | {r['Zone']}")
+        message_lines.append("✅ KST Daily/Weekly")
+        message_lines.append("✅ DMI richting")
+        message_lines.append("✅ ADX filter")
+
 
 else:
 
     print("Geen nieuwe trades")
+    message_lines.append("Geen nieuwe trades")
 
 
 
 print()
 print("👀 MONITOR")
 print("-----------------------------------")
+
+message_lines.append("")
+message_lines.append("👀 *MONITOR*")
 
 
 monitor=df[df["Status"]=="MONITOR"].head(10)
@@ -323,7 +388,14 @@ for _,r in monitor.iterrows():
         f"{r['Pair']} {r['Trend']} | ADX {r['ADX']} | K/D {r['K']}/{r['D']}"
     )
 
+    message_lines.append(
+        f"{r['Pair']} {r['Trend']} | ADX {r['ADX']} | K/D {r['K']}/{r['D']}"
+    )
+
 
 
 print()
 print("CSV opgeslagen")
+
+telegram_message = "\n".join(message_lines)
+send_telegram_message(telegram_message)
