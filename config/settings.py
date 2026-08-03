@@ -17,3 +17,9 @@ STOCH_OVERBOUGHT = 80
 ATR_MULTIPLIER = 2.0
 
 RR = 1.5
+
+# ===========================
+# OUTPUT
+# ===========================
+
+DEBUG = False

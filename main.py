@@ -198,19 +198,46 @@ def analyse(pair):
             adx_status="WEAK"
 
 
+        reasons = []
+        score = 0
 
-        score=0
+        # Weekly trend
+        if trend == weekly_trend:
+            score += 30
+            reasons.append("✅ Weekly KST")
+        else:
+            reasons.append("❌ Weekly KST")
 
-        if trend==weekly_trend:
-            score+=30
+        # DMI
+        if trend == dmi:
+            score += 25
+            reasons.append("✅ DMI")
+        else:
+            reasons.append("❌ DMI")
 
-        if trend==dmi:
-            score+=25
+        # ADX
+        if adx_status != "WEAK":
+            score += 25
+            reasons.append(f"✅ ADX {round(d['ADX'],1)}")
+        else:
+            reasons.append(f"❌ ADX {round(d['ADX'],1)}")
 
-        if adx_status!="WEAK":
-            score+=25
+        # =====================================
+        # CONFIDENCE SCORE
+        # =====================================
 
+        confidence = round((score / 80) * 100)
 
+        if confidence >= 95:
+            stars = "⭐⭐⭐⭐⭐"
+        elif confidence >= 85:
+            stars = "⭐⭐⭐⭐"
+        elif confidence >= 70:
+            stars = "⭐⭐⭐"
+        elif confidence >= 50:
+            stars = "⭐⭐"
+        else:
+            stars = "⭐"
 
         bull_cross=(
             df["K"].iloc[-2] <= df["D"].iloc[-2]
@@ -257,7 +284,17 @@ def analyse(pair):
 
             status=""
 
+        # =====================================
+        # STOP LOSS
+        # =====================================
 
+        stop_loss = None
+
+        if entry == "LONG":
+            stop_loss = d["Close"] - (ATR_MULTIPLIER * d["ATR"])
+
+        elif entry == "SHORT":
+            stop_loss = d["Close"] + (ATR_MULTIPLIER * d["ATR"])       
 
         return {
 
@@ -267,12 +304,17 @@ def analyse(pair):
             "Score":score,
             "ADX":round(d["ADX"],1),
             "ATR": round(d["ATR"],5),
+            "Close": round(d["Close"],5),
+            "Stop Loss": round(stop_loss,5) if stop_loss else "-",
             "ADX status":adx_status,
             "K":round(d["K"],1),
             "D":round(d["D"],1),
             "Zone":zone,
             "Entry":entry,
-            "Status":status
+            "Status":status,
+            "Reason": " | ".join(reasons), 
+            "Confidence": confidence,
+            "Stars": stars
         }
 
 
@@ -286,11 +328,14 @@ def analyse(pair):
 results=[]
 
 
+print(f"Scannen van {len(pairs)} markten...")
+
 for pair in pairs:
 
-    print("Scan:",pair)
+    if DEBUG:
+        print("Scan:", pair)
 
-    r=analyse(pair)
+    r = analyse(pair)
 
     if r:
         results.append(r)
@@ -298,6 +343,8 @@ for pair in pairs:
 
 
 df=pd.DataFrame(results)
+print(df.columns.tolist())
+print(df.head())
 
 
 
@@ -346,9 +393,13 @@ if len(trade)>0:
     for _,r in trade.iterrows():
 
         print()
-        print(
-            f"{r['Pair']} {r['Entry']}"
-        )
+        print(f"{r['Stars']}  {r['Pair']} {r['Entry']}")
+        print(f"Confidence : {r['Confidence']}%")
+        print(f"Entry      : {r['Close']}")
+        print(f"Stop Loss  : {r['Stop Loss']}")
+        print(f"ADX        : {r['ADX']}")
+        print(f"ATR        : {r['ATR']}")
+        print(f"Stoch      : {r['K']}/{r['D']}")
 
         print(
             f"ADX {r['ADX']} | Stoch {r['K']}/{r['D']} | {r['Zone']}"
@@ -367,11 +418,12 @@ if len(trade)>0:
         )
 
         message_lines.append("")
-        message_lines.append(f"*{r['Pair']} {r['Entry']}*")
-        message_lines.append(f"ADX {r['ADX']} | Stoch {r['K']}/{r['D']} | {r['Zone']}")
-        message_lines.append("✅ KST Daily/Weekly")
-        message_lines.append("✅ DMI richting")
-        message_lines.append("✅ ADX filter")
+        message_lines.append(f"{r['Stars']} *{r['Pair']} {r['Entry']}*")
+        message_lines.append(f"Confidence : {r['Confidence']}%")
+        message_lines.append(f"Entry : {r['Close']}")
+        message_lines.append(f"SL : {r['Stop Loss']}")
+        message_lines.append(f"ADX : {r['ADX']}")
+        message_lines.append(f"ATR : {r['ATR']}")
 
 
 else:
@@ -395,7 +447,7 @@ monitor=df[df["Status"]=="MONITOR"].head(10)
 for _,r in monitor.iterrows():
 
     print(
-    f"{r['Pair']} {r['Trend']} | ADX {r['ADX']} | ATR {r['ATR']} | K/D {r['K']}/{r['D']}"
+    f"{r['Stars']} {r['Pair']} ({r['Confidence']}%)"
     )
 
     message_lines.append(
