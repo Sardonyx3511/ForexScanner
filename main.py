@@ -4,7 +4,7 @@ import ta
 import pandas as pd
 import requests
 from datetime import datetime
-
+from config.settings import *
 
 print("\033c", end="")
 
@@ -148,6 +148,15 @@ def analyse(pair):
         df["DI+"]=adx.adx_pos()
         df["DI-"]=adx.adx_neg()
 
+        atr = ta.volatility.AverageTrueRange(
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            window=14
+        )
+
+        df["ATR"] = atr.average_true_range()
+
 
 
         stoch=ta.momentum.StochasticOscillator(
@@ -176,7 +185,7 @@ def analyse(pair):
 
 
 
-        if d["ADX"]>=25:
+        if d["ADX"]>=ADX_MIN:
 
             adx_status="STRONG"
 
@@ -224,7 +233,7 @@ def analyse(pair):
 
             entry="LONG"
 
-            zone="OK" if d["K"]<80 else "OVERBOUGHT ⚠️"
+            zone="OK" if d["K"]<STOCH_OVERBOUGHT else "OVERBOUGHT ⚠️"
 
 
 
@@ -232,7 +241,7 @@ def analyse(pair):
 
             entry="SHORT"
 
-            zone="OK" if d["K"]>20 else "OVERSOLD ⚠️"
+            zone="OK" if d["K"]>STOCH_OVERSOLD else "OVERSOLD ⚠️"
 
 
 
@@ -257,6 +266,7 @@ def analyse(pair):
             "Trend":trend,
             "Score":score,
             "ADX":round(d["ADX"],1),
+            "ATR": round(d["ATR"],5),
             "ADX status":adx_status,
             "K":round(d["K"],1),
             "D":round(d["D"],1),
@@ -385,11 +395,11 @@ monitor=df[df["Status"]=="MONITOR"].head(10)
 for _,r in monitor.iterrows():
 
     print(
-        f"{r['Pair']} {r['Trend']} | ADX {r['ADX']} | K/D {r['K']}/{r['D']}"
+    f"{r['Pair']} {r['Trend']} | ADX {r['ADX']} | ATR {r['ATR']} | K/D {r['K']}/{r['D']}"
     )
 
     message_lines.append(
-        f"{r['Pair']} {r['Trend']} | ADX {r['ADX']} | K/D {r['K']}/{r['D']}"
+    f"{r['Pair']} {r['Trend']} | ADX {r['ADX']} | ATR {r['ATR']} | K/D {r['K']}/{r['D']}"
     )
 
 
