@@ -5,15 +5,19 @@ from utils.indicators import (
     calculate_kst,
     add_adx,
     add_atr,
-    add_stochastic
+    add_stochastic,
+    add_rsi,
+    add_ema,
+    get_ema_distance_atr,
+    detect_rsi_divergence
 )
 import pandas as pd
 import requests
 from datetime import datetime
 from config.settings import *
-from utils.risk import ( 
-        calculate_stop_loss, 
-        calculate_take_profit, 
+from utils.risk import (
+        calculate_stop_loss,
+        calculate_take_profit,
         calculate_lot_size
 )
 
@@ -21,8 +25,8 @@ from utils.risk import (
 print("\033c", end="")
 
 print("===================================")
-print("      FOREX SCANNER v1.9")
-print("      TELEGRAM REPORT STYLE")
+print("      FOREX SCANNER v2.7")
+print("      RSI DIVERGENCE + EMA FILTER")
 print("===================================")
 
 
@@ -55,12 +59,6 @@ pairs = [
 # ============================================
 # TELEGRAM CONFIG
 # ============================================
-# Token en chat ID komen uit environment variables.
-# Lokaal kun je ze zetten met (PowerShell):
-#   $env:TELEGRAM_TOKEN="123456:ABC..."
-#   $env:TELEGRAM_CHAT_ID="2143382141"
-# In GitHub Actions komen ze uit de repository Secrets.
-
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -92,6 +90,7 @@ def send_telegram_message(text):
 
     except Exception as e:
         print(f"⚠️  Versturen naar Telegram mislukt: {e}")
+
 
 def analyse(pair):
 
@@ -129,6 +128,10 @@ def analyse(pair):
 
         df = add_stochastic(df)
 
+        df = add_rsi(df, window=RSI_WINDOW)
+
+        df = add_ema(df, span=EMA_SPAN, column_name="EMA21")
+
         d=df.iloc[-1]
         w=weekly.iloc[-1]
 
@@ -150,6 +153,21 @@ def analyse(pair):
         else:
 
             adx_status="WEAK"
+
+
+        # =====================================
+        # RSI-DIVERGENTIE
+        # =====================================
+        bullish_div, bearish_div = detect_rsi_divergence(
+            df,
+            lookback=DIVERGENCE_LOOKBACK,
+            order=DIVERGENCE_ORDER
+        )
+
+        divergence_aligned = (
+            (trend == "BULL" and bullish_div)
+            or (trend == "BEAR" and bearish_div)
+        )
 
 
         reasons = []
@@ -176,11 +194,18 @@ def analyse(pair):
         else:
             reasons.append(f"❌ ADX {round(d['ADX'],1)}")
 
+        # RSI-divergentie
+        if divergence_aligned:
+            score += DIVERGENCE_SCORE
+            reasons.append("✅ RSI Divergentie")
+        else:
+            reasons.append("❌ RSI Divergentie")
+
         # =====================================
         # CONFIDENCE SCORE
         # =====================================
 
-        confidence = round((score / 80) * 100)
+        confidence = round((score / MAX_SCORE) * 100)
 
         if confidence >= 95:
             stars = "⭐⭐⭐⭐⭐"
@@ -225,9 +250,19 @@ def analyse(pair):
             zone="OK" if d["K"]>STOCH_OVERSOLD else "OVERSOLD ⚠️"
 
 
+        # =====================================
+        # EMA21-AFSTANDSFILTER (waarschuwing, geen scoring)
+        # =====================================
+        ema_distance_atr = get_ema_distance_atr(d, ema_column="EMA21")
+        extended = abs(ema_distance_atr) > EMA_EXTENDED_THRESHOLD_ATR
+
+
         if entry!="-" and adx_status!="WEAK":
 
             status="TRADE WATCH"
+
+            if extended:
+                status="TRADE WATCH (UITGEREKT ⚠️)"
 
         elif trend==weekly_trend and adx_status!="WEAK":
 
@@ -238,7 +273,7 @@ def analyse(pair):
             status=""
 
         # =====================================
-        # STOP LOSS
+        # STOP LOSS / TAKE PROFIT / LOT SIZE
         # =====================================
 
         stop_loss = calculate_stop_loss(
@@ -253,7 +288,7 @@ def analyse(pair):
                stop_loss,
                RR,
                entry
-        )      
+        )
 
         lot_size, risk_note = calculate_lot_size(
                ACCOUNT_SIZE,
@@ -282,7 +317,10 @@ def analyse(pair):
             "Zone":zone,
             "Entry":entry,
             "Status":status,
-            "Reason": " | ".join(reasons), 
+            "EMA21 afstand (ATR)": round(ema_distance_atr, 2),
+            "Extended": extended,
+            "RSI Divergentie": divergence_aligned,
+            "Reason": " | ".join(reasons),
             "Confidence": confidence,
             "Stars": stars
         }
@@ -313,8 +351,10 @@ for pair in pairs:
 
 
 df=pd.DataFrame(results)
-print(df.columns.tolist())
-print(df.head())
+
+if DEBUG:
+    print(df.columns.tolist())
+    print(df.head())
 
 
 
@@ -330,7 +370,8 @@ df.to_csv(
     index=False
 )
 
-print(df[["Pair", "Entry", "Close", "Stop Loss", "Take Profit"]].head())
+if DEBUG:
+    print(df[["Pair", "Entry", "Close", "Stop Loss", "Take Profit"]].head())
 
 
 
@@ -341,17 +382,13 @@ print(scan_date)
 print("===================================")
 
 
-# ============================================
-# Bericht opbouwen (console + Telegram)
-# ============================================
-
 message_lines = []
 message_lines.append(f"📱 *DAILY REPORT*")
 message_lines.append(scan_date)
 message_lines.append("")
 
 
-trade=df[df["Status"]=="TRADE WATCH"]
+trade=df[df["Status"].str.contains("TRADE WATCH", na=False)]
 
 
 if len(trade)>0:
@@ -369,10 +406,12 @@ if len(trade)>0:
         print(f"Confidence : {r['Confidence']}%")
         print(f"Entry      : {r['Close']}")
         print(f"Stop Loss  : {r['Stop Loss']}")
+        print(f"Take Profit: {r['Take Profit']}")
+        print(f"Lots       : {r['Lot size']}{r['Risk note']}")
         print(f"ADX        : {r['ADX']}")
         print(f"ATR        : {r['ATR']}")
         print(f"Stoch      : {r['K']}/{r['D']}")
-        
+        print(f"RSI Div.   : {'Ja' if r['RSI Divergentie'] else 'Nee'}")
 
         print(
             f"ADX {r['ADX']} | Stoch {r['K']}/{r['D']} | {r['Zone']}"
@@ -390,6 +429,9 @@ if len(trade)>0:
             "✅ ADX filter"
         )
 
+        if r["Extended"]:
+            print("⚠️ Uitgerekt t.o.v. EMA21, extra voorzichtig zijn")
+
         message_lines.append("")
         message_lines.append(f"{r['Stars']} *{r['Pair']} {r['Entry']}*")
         message_lines.append(f"Confidence : {r['Confidence']}%")
@@ -399,6 +441,10 @@ if len(trade)>0:
         message_lines.append(f"Lots : {r['Lot size']}{r['Risk note']}")
         message_lines.append(f"ADX : {r['ADX']}")
         message_lines.append(f"ATR : {r['ATR']}")
+        message_lines.append(f"RSI Divergentie : {'Ja ✅' if r['RSI Divergentie'] else 'Nee'}")
+
+        if r["Extended"]:
+            message_lines.append("⚠️ Uitgerekt t.o.v. EMA21, extra voorzichtig zijn")
 
 
 else:
