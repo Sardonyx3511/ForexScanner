@@ -1,10 +1,22 @@
 import os
 import yfinance as yf
 import ta
+from utils.indicators import (
+    calculate_kst,
+    add_adx,
+    add_atr,
+    add_stochastic
+)
 import pandas as pd
 import requests
 from datetime import datetime
 from config.settings import *
+from utils.risk import ( 
+        calculate_stop_loss, 
+        calculate_take_profit, 
+        calculate_lot_size
+)
+
 
 print("\033c", end="")
 
@@ -81,28 +93,6 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"⚠️  Versturen naar Telegram mislukt: {e}")
 
-
-def calculate_kst(data):
-
-    roc1=data["Close"].pct_change(10)*100
-    roc2=data["Close"].pct_change(15)*100
-    roc3=data["Close"].pct_change(20)*100
-    roc4=data["Close"].pct_change(30)*100
-
-    kst=(
-        roc1.rolling(10).mean()
-        +2*roc2.rolling(10).mean()
-        +3*roc3.rolling(10).mean()
-        +4*roc4.rolling(15).mean()
-    )
-
-    signal=kst.rolling(9).mean()
-
-    return kst,signal
-
-
-
-
 def analyse(pair):
 
     try:
@@ -122,8 +112,6 @@ def analyse(pair):
 
         df["KST"],df["KST Signal"]=calculate_kst(df)
 
-
-
         weekly=df.resample("W").agg(
             {
             "Open":"first",
@@ -135,48 +123,14 @@ def analyse(pair):
 
         weekly["KST"],weekly["KST Signal"]=calculate_kst(weekly)
 
+        df = add_adx(df)
 
+        df = add_atr(df)
 
-        adx=ta.trend.ADXIndicator(
-            df["High"],
-            df["Low"],
-            df["Close"],
-            window=14
-        )
-
-        df["ADX"]=adx.adx()
-        df["DI+"]=adx.adx_pos()
-        df["DI-"]=adx.adx_neg()
-
-        atr = ta.volatility.AverageTrueRange(
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
-            window=14
-        )
-
-        df["ATR"] = atr.average_true_range()
-
-
-
-        stoch=ta.momentum.StochasticOscillator(
-            df["High"],
-            df["Low"],
-            df["Close"],
-            window=8,
-            smooth_window=3
-        )
-
-
-        df["K"]=stoch.stoch()
-        df["D"]=df["K"].rolling(3).mean()
-
-
+        df = add_stochastic(df)
 
         d=df.iloc[-1]
         w=weekly.iloc[-1]
-
-
 
         trend="BULL" if d["KST"]>d["KST Signal"] else "BEAR"
         weekly_trend="BULL" if w["KST"]>w["KST Signal"] else "BEAR"
@@ -271,7 +225,6 @@ def analyse(pair):
             zone="OK" if d["K"]>STOCH_OVERSOLD else "OVERSOLD ⚠️"
 
 
-
         if entry!="-" and adx_status!="WEAK":
 
             status="TRADE WATCH"
@@ -288,13 +241,27 @@ def analyse(pair):
         # STOP LOSS
         # =====================================
 
-        stop_loss = None
+        stop_loss = calculate_stop_loss(
+               d["Close"],
+               d["ATR"],
+               ATR_MULTIPLIER,
+               entry
+        )
 
-        if entry == "LONG":
-            stop_loss = d["Close"] - (ATR_MULTIPLIER * d["ATR"])
+        take_profit = calculate_take_profit(
+               d["Close"],
+               stop_loss,
+               RR,
+               entry
+        )      
 
-        elif entry == "SHORT":
-            stop_loss = d["Close"] + (ATR_MULTIPLIER * d["ATR"])       
+        lot_size, risk_note = calculate_lot_size(
+               ACCOUNT_SIZE,
+               RISK_PERCENT,
+               d["Close"],
+               stop_loss,
+               pair
+        )
 
         return {
 
@@ -306,6 +273,9 @@ def analyse(pair):
             "ATR": round(d["ATR"],5),
             "Close": round(d["Close"],5),
             "Stop Loss": round(stop_loss,5) if stop_loss else "-",
+            "Take Profit": round(take_profit, 5) if take_profit else "-",
+            "Lot size": lot_size if lot_size else "-",
+            "Risk note": risk_note,
             "ADX status":adx_status,
             "K":round(d["K"],1),
             "D":round(d["D"],1),
@@ -360,6 +330,8 @@ df.to_csv(
     index=False
 )
 
+print(df[["Pair", "Entry", "Close", "Stop Loss", "Take Profit"]].head())
+
 
 
 print()
@@ -400,6 +372,7 @@ if len(trade)>0:
         print(f"ADX        : {r['ADX']}")
         print(f"ATR        : {r['ATR']}")
         print(f"Stoch      : {r['K']}/{r['D']}")
+        
 
         print(
             f"ADX {r['ADX']} | Stoch {r['K']}/{r['D']} | {r['Zone']}"
@@ -422,6 +395,8 @@ if len(trade)>0:
         message_lines.append(f"Confidence : {r['Confidence']}%")
         message_lines.append(f"Entry : {r['Close']}")
         message_lines.append(f"SL : {r['Stop Loss']}")
+        message_lines.append(f"TP : {r['Take Profit']}")
+        message_lines.append(f"Lots : {r['Lot size']}{r['Risk note']}")
         message_lines.append(f"ADX : {r['ADX']}")
         message_lines.append(f"ATR : {r['ATR']}")
 
