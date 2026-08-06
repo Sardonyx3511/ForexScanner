@@ -1,0 +1,7 @@
+Pair,Asset Class,Direction,Entry,Stop Loss,Take Profit,Volume bevestigd,Position size
+EURSEK,forex,SHORT,10.95791,11.07461,10.72451,False,-
+GBPCHF,forex,LONG,1.09293,1.08342,1.11196,False,"0.05 lots (indicatief, check pipwaarde bij broker)"
+PLATINUM,metals,LONG,1737.40002,1670.65435,1870.89136,True,$50.0 risico (check contractgrootte bij broker)
+PALLADIUM,metals,LONG,1374.5,1312.0392,1499.42159,True,$50.0 risico (check contractgrootte bij broker)
+COTTON,commodities,LONG,83.13,80.05319,89.28362,True,$50.0 risico (check contractgrootte bij broker)
+SUGAR,commodities,LONG,15.58,14.88463,16.97073,True,$50.0 risico (check contractgrootte bij broker)

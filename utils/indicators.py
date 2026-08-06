@@ -100,6 +100,52 @@ def add_ema(data, span=21, column_name="EMA21"):
     return data
 
 
+def add_bollinger_bands(data, window=20, window_dev=2):
+    """
+    Voegt Bollinger Bands toe: bovenband, onderband, middenlijn en
+    de bandbreedte als percentage van de middenlijn (BB_width) - dat
+    laatste is de maatstaf voor 'squeeze' (volatiliteitscompressie).
+    """
+
+    bb = ta.volatility.BollingerBands(
+        close=data["Close"],
+        window=window,
+        window_dev=window_dev,
+    )
+
+    data["BB_upper"] = bb.bollinger_hband()
+    data["BB_lower"] = bb.bollinger_lband()
+    data["BB_mid"] = bb.bollinger_mavg()
+    data["BB_width"] = bb.bollinger_wband()
+
+    return data
+
+
+def add_keltner_channels(data, window=20, atr_window=20, multiplier=1.5):
+    """
+    Voegt Keltner Channels toe: een EMA-middenlijn met ATR-gebaseerde
+    bovenband/onderband. Wordt gebruikt in combinatie met Bollinger
+    Bands voor de 'Squeeze Momentum'-detectie: een squeeze is 'aan'
+    wanneer de Bollinger Bands volledig binnen de Keltner Channel
+    vallen (John Carter's TTM Squeeze-definitie).
+    """
+
+    kc = ta.volatility.KeltnerChannel(
+        high=data["High"],
+        low=data["Low"],
+        close=data["Close"],
+        window=window,
+        window_atr=atr_window,
+        multiplier=multiplier,
+    )
+
+    data["KC_upper"] = kc.keltner_channel_hband()
+    data["KC_lower"] = kc.keltner_channel_lband()
+    data["KC_mid"] = kc.keltner_channel_mband()
+
+    return data
+
+
 def get_ema_distance_atr(latest_row, ema_column="EMA21"):
     """
     Afstand van de prijs tot de EMA, uitgedrukt in ATR's. Robuuster dan

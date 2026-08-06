@@ -34,6 +34,7 @@ def calculate_take_profit(entry, stop_loss, rr, direction):
 
     return None
 
+
 def calculate_lot_size(account_size, risk_percent, entry, stop_loss, pair):
     """
     Berekent een (indicatieve) lotgrootte op basis van je accountgrootte,
@@ -67,3 +68,25 @@ def calculate_lot_size(account_size, risk_percent, entry, stop_loss, pair):
         risk_note = " (indicatief, check pipwaarde bij broker)"
 
     return lot_size, risk_note
+
+
+def calculate_crypto_units(account_size, risk_percent, entry, stop_loss):
+    """
+    Berekent hoeveel eenheden (coins) je kunt kopen/verkopen zodat het
+    verlies bij het raken van de stop loss exact het risicobedrag is.
+    Werkt goed voor crypto omdat daar geen lot/contract-grootte bestaat
+    zoals bij forex (1 coin = 1 coin, geen omrekening nodig).
+    """
+
+    if stop_loss is None or entry is None:
+        return None
+
+    stop_distance = abs(entry - stop_loss)
+
+    if stop_distance == 0:
+        return None
+
+    risk_amount = account_size * (risk_percent / 100)
+    units = risk_amount / stop_distance
+
+    return round(units, 4)

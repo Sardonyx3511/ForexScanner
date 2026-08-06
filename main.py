@@ -8,6 +8,7 @@ from utils.indicators import (
     add_stochastic,
     add_rsi,
     add_ema,
+    add_bollinger_bands,
     get_ema_distance_atr,
     detect_rsi_divergence
 )
@@ -18,42 +19,21 @@ from config.settings import *
 from utils.risk import (
         calculate_stop_loss,
         calculate_take_profit,
-        calculate_lot_size
+        calculate_lot_size,
+        calculate_crypto_units
 )
+from utils.breakout_strategy import check_latest_breakout_signal
 
 
 print("\033c", end="")
 
 print("===================================")
-print("      FOREX SCANNER v2.7")
-print("      RSI DIVERGENCE + EMA FILTER")
+print("      FOREX SCANNER v3.0")
+print("      HOOFDSTRATEGIE + BREAKOUT/VOLUME")
 print("===================================")
 
 
 scan_date = datetime.now().strftime("%d-%m-%Y %H:%M")
-
-
-pairs = [
-"EURUSD=X","GBPUSD=X","USDJPY=X","USDCHF=X",
-"AUDUSD=X","USDCAD=X","NZDUSD=X",
-"EURJPY=X","EURGBP=X","EURAUD=X",
-"EURCAD=X","EURCHF=X","EURNZD=X",
-"GBPJPY=X","GBPAUD=X","GBPCAD=X",
-"GBPCHF=X","GBPNZD=X",
-"AUDJPY=X","CADJPY=X","CHFJPY=X",
-"NZDJPY=X",
-"AUDCAD=X","AUDCHF=X","AUDNZD=X",
-"NZDCAD=X","NZDCHF=X",
-"CADCHF=X",
-"USDSEK=X","USDNOK=X",
-"EURSEK=X","EURNOK=X",
-"USDMXN=X","USDZAR=X",
-"USDTRY=X","USDPLN=X",
-"USDHUF=X","USDILS=X",
-"SGDJPY=X","HKDJPY=X",
-"ZARJPY=X","MXNJPY=X",
-"TRYJPY=X","PLNJPY=X"
-]
 
 
 # ============================================
@@ -92,7 +72,44 @@ def send_telegram_message(text):
         print(f"⚠️  Versturen naar Telegram mislukt: {e}")
 
 
+def determine_position_size(asset_class, entry_price, stop_loss, pair):
+    """
+    Positiegrootte per assetklasse - zelfde aanpak als in de backtest-
+    scripts. Forex krijgt een lot-getal, crypto een aantal eenheden,
+    de rest (metals/indices/commodities) een risicobedrag zonder
+    specifiek aantal (contractgroottes verschillen te veel om
+    betrouwbaar te berekenen zonder brokerdata).
+    """
+
+    if entry_price is None or stop_loss is None:
+        return "-"
+
+    if asset_class == "forex":
+        lot_size, risk_note = calculate_lot_size(
+            ACCOUNT_SIZE, RISK_PERCENT, entry_price, stop_loss, pair
+        )
+        return f"{lot_size} lots{risk_note}" if lot_size else "-"
+
+    elif asset_class == "crypto":
+        units = calculate_crypto_units(
+            ACCOUNT_SIZE, RISK_PERCENT, entry_price, stop_loss
+        )
+        return f"{units} units" if units else "-"
+
+    else:
+        risk_amount = round(ACCOUNT_SIZE * (RISK_PERCENT / 100), 2)
+        return f"${risk_amount} risico (check contractgrootte bij broker)"
+
+
 def analyse(pair):
+    """
+    Hoofdstrategie: KST + DMI + ADX + Stochastic-cross, met RSI-
+    divergentie en EMA21-afstandsfilter. Downloadt en bereidt de data
+    ook voor voor de breakout-strategie (zelfde df, geen dubbele
+    download) en checkt die er meteen bij.
+
+    Geeft (main_result, breakout_result) terug - beide kunnen None zijn.
+    """
 
     try:
 
@@ -105,8 +122,8 @@ def analyse(pair):
         )
 
 
-        if df.empty:
-            return None
+        if df.empty or len(df) < 150:
+            return None, None
 
 
         df["KST"],df["KST Signal"]=calculate_kst(df)
@@ -131,6 +148,11 @@ def analyse(pair):
         df = add_rsi(df, window=RSI_WINDOW)
 
         df = add_ema(df, span=EMA_SPAN, column_name="EMA21")
+
+        df = add_bollinger_bands(df, window=20, window_dev=2)
+
+        asset_class = get_asset_class(pair)
+        clean_name = clean_pair_name(pair)
 
         d=df.iloc[-1]
         w=weekly.iloc[-1]
@@ -173,37 +195,29 @@ def analyse(pair):
         reasons = []
         score = 0
 
-        # Weekly trend
         if trend == weekly_trend:
             score += 30
             reasons.append("✅ Weekly KST")
         else:
             reasons.append("❌ Weekly KST")
 
-        # DMI
         if trend == dmi:
             score += 25
             reasons.append("✅ DMI")
         else:
             reasons.append("❌ DMI")
 
-        # ADX
         if adx_status != "WEAK":
             score += 25
             reasons.append(f"✅ ADX {round(d['ADX'],1)}")
         else:
             reasons.append(f"❌ ADX {round(d['ADX'],1)}")
 
-        # RSI-divergentie
         if divergence_aligned:
             score += DIVERGENCE_SCORE
             reasons.append("✅ RSI Divergentie")
         else:
             reasons.append("❌ RSI Divergentie")
-
-        # =====================================
-        # CONFIDENCE SCORE
-        # =====================================
 
         confidence = round((score / MAX_SCORE) * 100)
 
@@ -223,25 +237,19 @@ def analyse(pair):
             and df["K"].iloc[-1] > df["D"].iloc[-1]
         )
 
-
         bear_cross=(
             df["K"].iloc[-2] >= df["D"].iloc[-2]
             and df["K"].iloc[-1] < df["D"].iloc[-1]
         )
 
-
         entry="-"
         zone="-"
-
-
 
         if trend=="BULL" and trend==weekly_trend and bull_cross and d["K"]>d["D"]:
 
             entry="LONG"
 
             zone="OK" if d["K"]<STOCH_OVERBOUGHT else "OVERBOUGHT ⚠️"
-
-
 
         elif trend=="BEAR" and trend==weekly_trend and bear_cross and d["K"]<d["D"]:
 
@@ -250,9 +258,6 @@ def analyse(pair):
             zone="OK" if d["K"]>STOCH_OVERSOLD else "OVERSOLD ⚠️"
 
 
-        # =====================================
-        # EMA21-AFSTANDSFILTER (waarschuwing, geen scoring)
-        # =====================================
         ema_distance_atr = get_ema_distance_atr(d, ema_column="EMA21")
         extended = abs(ema_distance_atr) > EMA_EXTENDED_THRESHOLD_ATR
 
@@ -272,10 +277,6 @@ def analyse(pair):
 
             status=""
 
-        # =====================================
-        # STOP LOSS / TAKE PROFIT / LOT SIZE
-        # =====================================
-
         stop_loss = calculate_stop_loss(
                d["Close"],
                d["ATR"],
@@ -290,18 +291,13 @@ def analyse(pair):
                entry
         )
 
-        lot_size, risk_note = calculate_lot_size(
-               ACCOUNT_SIZE,
-               RISK_PERCENT,
-               d["Close"],
-               stop_loss,
-               pair
-        )
+        position_size = determine_position_size(asset_class, d["Close"], stop_loss, pair) if entry != "-" else "-"
 
-        return {
+        main_result = {
 
             "Datum":scan_date,
-            "Pair":pair.replace("=X",""),
+            "Pair":clean_name,
+            "Asset Class": asset_class,
             "Trend":trend,
             "Score":score,
             "ADX":round(d["ADX"],1),
@@ -309,8 +305,7 @@ def analyse(pair):
             "Close": round(d["Close"],5),
             "Stop Loss": round(stop_loss,5) if stop_loss else "-",
             "Take Profit": round(take_profit, 5) if take_profit else "-",
-            "Lot size": lot_size if lot_size else "-",
-            "Risk note": risk_note,
+            "Position size": position_size,
             "ADX status":adx_status,
             "K":round(d["K"],1),
             "D":round(d["D"],1),
@@ -326,27 +321,64 @@ def analyse(pair):
         }
 
 
-    except:
+        # =====================================
+        # BREAKOUT / VOLUME-STRATEGIE
+        # (hergebruikt dezelfde df, geen extra download)
+        # =====================================
+        breakout_signal = check_latest_breakout_signal(
+            df,
+            atr_multiplier=ATR_MULTIPLIER,
+            rr=RR,
+        )
 
-        return None
+        breakout_result = None
+
+        if breakout_signal is not None:
+
+            bo_position_size = determine_position_size(
+                asset_class, breakout_signal["entry_price"], breakout_signal["stop_loss"], pair
+            )
+
+            breakout_result = {
+                "Pair": clean_name,
+                "Asset Class": asset_class,
+                "Direction": breakout_signal["direction"],
+                "Entry": round(breakout_signal["entry_price"], 5),
+                "Stop Loss": round(breakout_signal["stop_loss"], 5),
+                "Take Profit": round(breakout_signal["take_profit"], 5),
+                "Volume bevestigd": breakout_signal["volume_confirmed"],
+                "Position size": bo_position_size,
+            }
+
+
+        return main_result, breakout_result
+
+
+    except Exception:
+
+        return None, None
 
 
 
 
 results=[]
+breakout_results=[]
 
 
-print(f"Scannen van {len(pairs)} markten...")
+print(f"Scannen van {len(ALL_PAIRS)} markten...")
 
-for pair in pairs:
+for pair in ALL_PAIRS:
 
     if DEBUG:
         print("Scan:", pair)
 
-    r = analyse(pair)
+    r, b = analyse(pair)
 
     if r:
         results.append(r)
+
+    if b:
+        breakout_results.append(b)
 
 
 
@@ -370,8 +402,10 @@ df.to_csv(
     index=False
 )
 
-if DEBUG:
-    print(df[["Pair", "Entry", "Close", "Stop Loss", "Take Profit"]].head())
+if not breakout_results:
+    pd.DataFrame(columns=["Pair","Asset Class","Direction","Entry","Stop Loss","Take Profit","Volume bevestigd","Position size"]).to_csv("breakout_resultaat.csv", index=False)
+else:
+    pd.DataFrame(breakout_results).to_csv("breakout_resultaat.csv", index=False)
 
 
 
@@ -394,53 +428,38 @@ trade=df[df["Status"].str.contains("TRADE WATCH", na=False)]
 if len(trade)>0:
 
     print()
-    print("🔥 TRADE WATCH")
+    print("🔥 TRADE WATCH (hoofdstrategie)")
     print("-----------------------------------")
 
-    message_lines.append("🔥 *TRADE WATCH*")
+    message_lines.append("🔥 *TRADE WATCH (hoofdstrategie)*")
 
     for _,r in trade.iterrows():
 
+        asset_tag = r["Asset Class"].upper()
+
         print()
-        print(f"{r['Stars']}  {r['Pair']} {r['Entry']}")
+        print(f"{r['Stars']}  [{asset_tag}] {r['Pair']} {r['Entry']}")
         print(f"Confidence : {r['Confidence']}%")
         print(f"Entry      : {r['Close']}")
         print(f"Stop Loss  : {r['Stop Loss']}")
         print(f"Take Profit: {r['Take Profit']}")
-        print(f"Lots       : {r['Lot size']}{r['Risk note']}")
+        print(f"Size       : {r['Position size']}")
         print(f"ADX        : {r['ADX']}")
         print(f"ATR        : {r['ATR']}")
         print(f"Stoch      : {r['K']}/{r['D']}")
         print(f"RSI Div.   : {'Ja' if r['RSI Divergentie'] else 'Nee'}")
 
-        print(
-            f"ADX {r['ADX']} | Stoch {r['K']}/{r['D']} | {r['Zone']}"
-        )
-
-        print(
-            "✅ KST Daily/Weekly"
-        )
-
-        print(
-            "✅ DMI richting"
-        )
-
-        print(
-            "✅ ADX filter"
-        )
-
         if r["Extended"]:
             print("⚠️ Uitgerekt t.o.v. EMA21, extra voorzichtig zijn")
 
         message_lines.append("")
-        message_lines.append(f"{r['Stars']} *{r['Pair']} {r['Entry']}*")
+        message_lines.append(f"{r['Stars']} [{asset_tag}] *{r['Pair']} {r['Entry']}*")
         message_lines.append(f"Confidence : {r['Confidence']}%")
         message_lines.append(f"Entry : {r['Close']}")
         message_lines.append(f"SL : {r['Stop Loss']}")
         message_lines.append(f"TP : {r['Take Profit']}")
-        message_lines.append(f"Lots : {r['Lot size']}{r['Risk note']}")
+        message_lines.append(f"Size : {r['Position size']}")
         message_lines.append(f"ADX : {r['ADX']}")
-        message_lines.append(f"ATR : {r['ATR']}")
         message_lines.append(f"RSI Divergentie : {'Ja ✅' if r['RSI Divergentie'] else 'Nee'}")
 
         if r["Extended"]:
@@ -449,36 +468,78 @@ if len(trade)>0:
 
 else:
 
-    print("Geen nieuwe trades")
-    message_lines.append("Geen nieuwe trades")
+    print("Geen nieuwe trades (hoofdstrategie)")
+    message_lines.append("Geen nieuwe trades (hoofdstrategie)")
+
+
+# =====================================
+# BREAKOUT WATCH (nieuwe sectie)
+# =====================================
+
+print()
+print("🚀 BREAKOUT WATCH (Bollinger Squeeze + Volume)")
+print("-----------------------------------")
+
+message_lines.append("")
+message_lines.append("🚀 *BREAKOUT WATCH (Squeeze + Volume)*")
+
+if breakout_results:
+
+    for r in breakout_results:
+
+        asset_tag = r["Asset Class"].upper()
+        vol_tag = "✅ Volume bevestigd" if r["Volume bevestigd"] else "⚠️ Geen volumedata (check handmatig)"
+
+        print()
+        print(f"[{asset_tag}] {r['Pair']} {r['Direction']}")
+        print(f"Entry      : {r['Entry']}")
+        print(f"Stop Loss  : {r['Stop Loss']}")
+        print(f"Take Profit: {r['Take Profit']}")
+        print(f"Size       : {r['Position size']}")
+        print(vol_tag)
+
+        message_lines.append("")
+        message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}*")
+        message_lines.append(f"Entry : {r['Entry']}")
+        message_lines.append(f"SL : {r['Stop Loss']}")
+        message_lines.append(f"TP : {r['Take Profit']}")
+        message_lines.append(f"Size : {r['Position size']}")
+        message_lines.append(vol_tag)
+
+else:
+
+    print("Geen nieuwe breakouts")
+    message_lines.append("Geen nieuwe breakouts")
 
 
 
 print()
-print("👀 MONITOR")
+print("👀 MONITOR (hoofdstrategie)")
 print("-----------------------------------")
 
 message_lines.append("")
-message_lines.append("👀 *MONITOR*")
+message_lines.append("👀 *MONITOR (hoofdstrategie)*")
 
 
-monitor=df[df["Status"]=="MONITOR"].head(10)
+monitor=df[df["Status"]=="MONITOR"].head(MONITOR_MAX_ROWS)
 
 
 for _,r in monitor.iterrows():
 
+    asset_tag = r["Asset Class"].upper()
+
     print(
-    f"{r['Stars']} {r['Pair']} ({r['Confidence']}%)"
+    f"{r['Stars']} [{asset_tag}] {r['Pair']} ({r['Confidence']}%)"
     )
 
     message_lines.append(
-    f"{r['Pair']} {r['Trend']} | ADX {r['ADX']} | ATR {r['ATR']} | K/D {r['K']}/{r['D']}"
+    f"[{asset_tag}] {r['Pair']} {r['Trend']} | ADX {r['ADX']} | K/D {r['K']}/{r['D']}"
     )
 
 
 
 print()
-print("CSV opgeslagen")
+print("CSV's opgeslagen: scan_resultaat.csv, breakout_resultaat.csv")
 
 telegram_message = "\n".join(message_lines)
 send_telegram_message(telegram_message)
