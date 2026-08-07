@@ -29,7 +29,7 @@ print("\033c", end="")
 
 print("===================================")
 print("      FOREX SCANNER v3.1")
-print("      HOOFDSTRATEGIE + BREAKOUT/VOLUME")
+print("      BREAKOUT/VOLUME + HOOFDSTRATEGIE")
 print("      (met volume-diagnostiek)")
 print("===================================")
 
@@ -456,70 +456,15 @@ message_lines.append(scan_date)
 message_lines.append("")
 
 
-trade=df[df["Status"].str.contains("TRADE WATCH", na=False)]
-
-
-if len(trade)>0:
-
-    print()
-    print("🔥 TRADE WATCH (hoofdstrategie)")
-    print("-----------------------------------")
-
-    message_lines.append("🔥 *TRADE WATCH (hoofdstrategie)*")
-
-    for _,r in trade.iterrows():
-
-        asset_tag = r["Asset Class"].upper()
-
-        print()
-        print(f"{r['Stars']}  [{asset_tag}] {r['Pair']} {r['Entry']}")
-        print(f"Confidence : {r['Confidence']}%")
-        print(f"Entry      : {r['Close']}")
-        print(f"Stop Loss  : {r['Stop Loss']}")
-        print(f"Take Profit: {r['Take Profit']}")
-        pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
-        pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
-        print(f"SL afstand : {r['SL afstand']}{pip_info}")
-        print(f"TP afstand : {r['TP afstand']}{pip_info_tp}")
-        print(f"Size       : {r['Position size']}")
-        print(f"ADX        : {r['ADX']}")
-        print(f"ATR        : {r['ATR']}")
-        print(f"Stoch      : {r['K']}/{r['D']}")
-        print(f"RSI Div.   : {'Ja' if r['RSI Divergentie'] else 'Nee'}")
-
-        if r["Extended"]:
-            print("⚠️ Uitgerekt t.o.v. EMA21, extra voorzichtig zijn")
-
-        message_lines.append("")
-        message_lines.append(f"{r['Stars']} [{asset_tag}] *{r['Pair']} {r['Entry']}*")
-        message_lines.append(f"Confidence : {r['Confidence']}%")
-        message_lines.append(f"Entry : {r['Close']}")
-        message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
-        message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
-        message_lines.append(f"Size : {r['Position size']}")
-        message_lines.append(f"ADX : {r['ADX']}")
-        message_lines.append(f"RSI Divergentie : {'Ja ✅' if r['RSI Divergentie'] else 'Nee'}")
-
-        if r["Extended"]:
-            message_lines.append("⚠️ Uitgerekt t.o.v. EMA21, extra voorzichtig zijn")
-
-
-else:
-
-    print("Geen nieuwe trades (hoofdstrategie)")
-    message_lines.append("Geen nieuwe trades (hoofdstrategie)")
-
-
 # =====================================
-# BREAKOUT WATCH (met volume-diagnostiek)
+# 1. BREAKOUT WATCH - EERST (dit is de gevalideerde strategie)
 # =====================================
 
 print()
-print("🚀 BREAKOUT WATCH (Bollinger Squeeze + Volume)")
+print("🚀 BREAKOUT WATCH (Bollinger Squeeze + Volume) - GEVALIDEERD")
 print("-----------------------------------")
 
-message_lines.append("")
-message_lines.append("🚀 *BREAKOUT WATCH (Squeeze + Volume)*")
+message_lines.append("🚀 *BREAKOUT WATCH (Squeeze + Volume) - GEVALIDEERD*")
 
 if breakout_results:
 
@@ -558,6 +503,67 @@ else:
     message_lines.append("Geen nieuwe breakouts")
 
 
+# =====================================
+# 2. TRADE WATCH (hoofdstrategie) - ONDERAAN
+# (historisch niet winstgevend gebleken in backtests - puur informatief)
+# =====================================
+
+print()
+print("🔥 TRADE WATCH (hoofdstrategie - NIET gevalideerd, ter info)")
+print("-----------------------------------")
+
+message_lines.append("")
+message_lines.append("🔥 *TRADE WATCH (hoofdstrategie - niet gevalideerd, ter info)*")
+
+trade=df[df["Status"].str.contains("TRADE WATCH", na=False)]
+
+if len(trade)>0:
+
+    for _,r in trade.iterrows():
+
+        asset_tag = r["Asset Class"].upper()
+
+        print()
+        print(f"{r['Stars']}  [{asset_tag}] {r['Pair']} {r['Entry']}")
+        print(f"Confidence : {r['Confidence']}%")
+        print(f"Entry      : {r['Close']}")
+        print(f"Stop Loss  : {r['Stop Loss']}")
+        print(f"Take Profit: {r['Take Profit']}")
+        pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
+        pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
+        print(f"SL afstand : {r['SL afstand']}{pip_info}")
+        print(f"TP afstand : {r['TP afstand']}{pip_info_tp}")
+        print(f"Size       : {r['Position size']}")
+        print(f"ADX        : {r['ADX']}")
+        print(f"ATR        : {r['ATR']}")
+        print(f"Stoch      : {r['K']}/{r['D']}")
+        print(f"RSI Div.   : {'Ja' if r['RSI Divergentie'] else 'Nee'}")
+
+        if r["Extended"]:
+            print("⚠️ Uitgerekt t.o.v. EMA21, extra voorzichtig zijn")
+
+        message_lines.append("")
+        message_lines.append(f"{r['Stars']} [{asset_tag}] *{r['Pair']} {r['Entry']}*")
+        message_lines.append(f"Confidence : {r['Confidence']}%")
+        message_lines.append(f"Entry : {r['Close']}")
+        message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+        message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+        message_lines.append(f"Size : {r['Position size']}")
+        message_lines.append(f"ADX : {r['ADX']}")
+        message_lines.append(f"RSI Divergentie : {'Ja ✅' if r['RSI Divergentie'] else 'Nee'}")
+
+        if r["Extended"]:
+            message_lines.append("⚠️ Uitgerekt t.o.v. EMA21, extra voorzichtig zijn")
+
+else:
+
+    print("Geen nieuwe trades (hoofdstrategie)")
+    message_lines.append("Geen nieuwe trades (hoofdstrategie)")
+
+
+# =====================================
+# 3. MONITOR (hoofdstrategie) - HELEMAAL ONDERAAN
+# =====================================
 
 print()
 print("👀 MONITOR (hoofdstrategie)")
