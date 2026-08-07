@@ -28,8 +28,9 @@ from utils.breakout_strategy import check_latest_breakout_signal
 print("\033c", end="")
 
 print("===================================")
-print("      FOREX SCANNER v3.0")
+print("      FOREX SCANNER v3.1")
 print("      HOOFDSTRATEGIE + BREAKOUT/VOLUME")
+print("      (met volume-diagnostiek)")
 print("===================================")
 
 
@@ -74,11 +75,9 @@ def send_telegram_message(text):
 
 def determine_position_size(asset_class, entry_price, stop_loss, pair):
     """
-    Positiegrootte per assetklasse - zelfde aanpak als in de backtest-
-    scripts. Forex krijgt een lot-getal, crypto een aantal eenheden,
-    de rest (metals/indices/commodities) een risicobedrag zonder
-    specifiek aantal (contractgroottes verschillen te veel om
-    betrouwbaar te berekenen zonder brokerdata).
+    Positiegrootte per assetklasse - forex krijgt een lot-getal, crypto
+    een aantal eenheden, de rest (stocks/metals/indices/commodities)
+    een risicobedrag zonder specifiek aantal.
     """
 
     if entry_price is None or stop_loss is None:
@@ -293,6 +292,18 @@ def analyse(pair):
 
         position_size = determine_position_size(asset_class, d["Close"], stop_loss, pair) if entry != "-" else "-"
 
+        # SL/TP-afstand in ruwe prijseenheden + indicatieve pips voor forex
+        sl_distance = round(abs(d["Close"] - stop_loss), 5) if stop_loss else None
+        tp_distance = round(abs(take_profit - d["Close"]), 5) if take_profit else None
+
+        sl_pips = None
+        tp_pips = None
+        if asset_class == "forex" and sl_distance is not None:
+            clean_pair_check = pair.replace("=X", "")
+            pip_size = 0.01 if clean_pair_check.endswith("JPY") else 0.0001
+            sl_pips = round(sl_distance / pip_size, 1)
+            tp_pips = round(tp_distance / pip_size, 1)
+
         main_result = {
 
             "Datum":scan_date,
@@ -305,6 +316,10 @@ def analyse(pair):
             "Close": round(d["Close"],5),
             "Stop Loss": round(stop_loss,5) if stop_loss else "-",
             "Take Profit": round(take_profit, 5) if take_profit else "-",
+            "SL afstand": sl_distance,
+            "TP afstand": tp_distance,
+            "SL pips (indicatief)": sl_pips,
+            "TP pips (indicatief)": tp_pips,
             "Position size": position_size,
             "ADX status":adx_status,
             "K":round(d["K"],1),
@@ -339,6 +354,17 @@ def analyse(pair):
                 asset_class, breakout_signal["entry_price"], breakout_signal["stop_loss"], pair
             )
 
+            bo_sl_distance = round(abs(breakout_signal["entry_price"] - breakout_signal["stop_loss"]), 5)
+            bo_tp_distance = round(abs(breakout_signal["take_profit"] - breakout_signal["entry_price"]), 5)
+
+            bo_sl_pips = None
+            bo_tp_pips = None
+            if asset_class == "forex":
+                clean_pair_check = pair.replace("=X", "")
+                pip_size = 0.01 if clean_pair_check.endswith("JPY") else 0.0001
+                bo_sl_pips = round(bo_sl_distance / pip_size, 1)
+                bo_tp_pips = round(bo_tp_distance / pip_size, 1)
+
             breakout_result = {
                 "Pair": clean_name,
                 "Asset Class": asset_class,
@@ -346,7 +372,15 @@ def analyse(pair):
                 "Entry": round(breakout_signal["entry_price"], 5),
                 "Stop Loss": round(breakout_signal["stop_loss"], 5),
                 "Take Profit": round(breakout_signal["take_profit"], 5),
+                "SL afstand": bo_sl_distance,
+                "TP afstand": bo_tp_distance,
+                "SL pips (indicatief)": bo_sl_pips,
+                "TP pips (indicatief)": bo_tp_pips,
                 "Volume bevestigd": breakout_signal["volume_confirmed"],
+                "Volume vandaag": breakout_signal["volume_today"],
+                "Volume gem. 20d": breakout_signal["avg_volume_20d"],
+                "Volume ratio": breakout_signal["volume_ratio"],
+                "Data datum": str(breakout_signal["data_date"])[:10],
                 "Position size": bo_position_size,
             }
 
@@ -403,7 +437,7 @@ df.to_csv(
 )
 
 if not breakout_results:
-    pd.DataFrame(columns=["Pair","Asset Class","Direction","Entry","Stop Loss","Take Profit","Volume bevestigd","Position size"]).to_csv("breakout_resultaat.csv", index=False)
+    pd.DataFrame(columns=["Pair","Asset Class","Direction","Entry","Stop Loss","Take Profit","Volume bevestigd","Volume vandaag","Volume gem. 20d","Volume ratio","Data datum","Position size"]).to_csv("breakout_resultaat.csv", index=False)
 else:
     pd.DataFrame(breakout_results).to_csv("breakout_resultaat.csv", index=False)
 
@@ -443,6 +477,10 @@ if len(trade)>0:
         print(f"Entry      : {r['Close']}")
         print(f"Stop Loss  : {r['Stop Loss']}")
         print(f"Take Profit: {r['Take Profit']}")
+        pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
+        pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
+        print(f"SL afstand : {r['SL afstand']}{pip_info}")
+        print(f"TP afstand : {r['TP afstand']}{pip_info_tp}")
         print(f"Size       : {r['Position size']}")
         print(f"ADX        : {r['ADX']}")
         print(f"ATR        : {r['ATR']}")
@@ -456,8 +494,8 @@ if len(trade)>0:
         message_lines.append(f"{r['Stars']} [{asset_tag}] *{r['Pair']} {r['Entry']}*")
         message_lines.append(f"Confidence : {r['Confidence']}%")
         message_lines.append(f"Entry : {r['Close']}")
-        message_lines.append(f"SL : {r['Stop Loss']}")
-        message_lines.append(f"TP : {r['Take Profit']}")
+        message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+        message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
         message_lines.append(f"Size : {r['Position size']}")
         message_lines.append(f"ADX : {r['ADX']}")
         message_lines.append(f"RSI Divergentie : {'Ja ✅' if r['RSI Divergentie'] else 'Nee'}")
@@ -473,7 +511,7 @@ else:
 
 
 # =====================================
-# BREAKOUT WATCH (nieuwe sectie)
+# BREAKOUT WATCH (met volume-diagnostiek)
 # =====================================
 
 print()
@@ -495,16 +533,24 @@ if breakout_results:
         print(f"Entry      : {r['Entry']}")
         print(f"Stop Loss  : {r['Stop Loss']}")
         print(f"Take Profit: {r['Take Profit']}")
+        bo_pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
+        bo_pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
+        print(f"SL afstand : {r['SL afstand']}{bo_pip_info}")
+        print(f"TP afstand : {r['TP afstand']}{bo_pip_info_tp}")
         print(f"Size       : {r['Position size']}")
         print(vol_tag)
+        if r["Volume ratio"] is not None:
+            print(f"Volume detail: {r['Volume vandaag']} vs gem. {r['Volume gem. 20d']} = {r['Volume ratio']}x (databatum: {r['Data datum']})")
 
         message_lines.append("")
         message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}*")
         message_lines.append(f"Entry : {r['Entry']}")
-        message_lines.append(f"SL : {r['Stop Loss']}")
-        message_lines.append(f"TP : {r['Take Profit']}")
+        message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{bo_pip_info})")
+        message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{bo_pip_info_tp})")
         message_lines.append(f"Size : {r['Position size']}")
         message_lines.append(vol_tag)
+        if r["Volume ratio"] is not None:
+            message_lines.append(f"Vol: {r['Volume vandaag']} / gem {r['Volume gem. 20d']} = {r['Volume ratio']}x ({r['Data datum']})")
 
 else:
 
