@@ -1,20 +1,16 @@
 name: Forex Scanner
 on:
-  schedule:
-    # GitHub garandeert niet dat een cron-job exact op de ingestelde
-    # minuut draait (bij drukte kan dit tientallen minuten of soms
-    # zelfs uren afwijken). Daarom draaien we elke 15 minuten een
-    # lichte check, in plaats van te gokken op één enkel moment per
-    # dag. Zodra het rond 23:00-23:59 Nederlandse tijd is (en dat nog
-    # niet eerder vandaag is gebeurd), voert hij de echte scan uit.
-    - cron: "*/15 * * * *"
   workflow_dispatch:
-    # Hiermee kun je de scan ook handmatig starten via de GitHub-website
-    # (tab "Actions" -> "Forex Scanner" -> "Run workflow"). Handmatig
-    # starten slaat de tijd- en dubbele-run-check over en draait altijd.
+    # Wordt gestart door cron-job.org (via de GitHub API, dagelijks
+    # om 23:15 Europe/Amsterdam) EN kan altijd handmatig gestart worden
+    # via de "Run workflow"-knop op deze pagina.
+    #
+    # De ingebouwde GitHub 'schedule'-trigger is bewust verwijderd:
+    # die bleek onbetrouwbaar (vertraagde/gemiste triggers) en zorgde
+    # voor dubbele runs naast cron-job.org.
 
 permissions:
-  contents: write   # nodig om het statusbestand (laatste-run-datum) terug te committen
+  contents: write
 
 jobs:
   run-scanner:
@@ -23,54 +19,16 @@ jobs:
       - name: Repository ophalen
         uses: actions/checkout@v4
 
-      - name: Tijd- en dubbele-run-check (alleen bij scheduled runs)
-        if: github.event_name == 'schedule'
-        run: |
-          NL_HOUR=$(TZ="Europe/Amsterdam" date +%H)
-          NL_DATE=$(TZ="Europe/Amsterdam" date +%Y-%m-%d)
-          echo "Huidig uur in Nederland: $NL_HOUR, datum: $NL_DATE"
-
-          STATE_FILE=".github/state/last_run.txt"
-          LAST_RUN=""
-          if [ -f "$STATE_FILE" ]; then
-            LAST_RUN=$(cat "$STATE_FILE")
-          fi
-
-          if [ "$NL_HOUR" != "23" ]; then
-            echo "Niet het juiste uur, run wordt overgeslagen."
-            echo "SKIP=true" >> "$GITHUB_ENV"
-          elif [ "$LAST_RUN" == "$NL_DATE" ]; then
-            echo "Vandaag al gedraaid om 23:xx, run wordt overgeslagen (voorkomt dubbel bericht)."
-            echo "SKIP=true" >> "$GITHUB_ENV"
-          else
-            echo "Juiste moment, scan wordt uitgevoerd."
-            echo "NL_DATE=$NL_DATE" >> "$GITHUB_ENV"
-          fi
-
       - name: Python installeren
-        if: env.SKIP != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Dependencies installeren
-        if: env.SKIP != 'true'
         run: pip install -r requirements.txt
 
       - name: Scanner uitvoeren
-        if: env.SKIP != 'true'
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
-
-      - name: Status bijwerken (voorkomt dubbele run vandaag)
-        if: env.SKIP != 'true' && github.event_name == 'schedule'
-        run: |
-          mkdir -p .github/state
-          echo "$NL_DATE" > .github/state/last_run.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .github/state/last_run.txt
-          git commit -m "Update laatste-run-datum naar $NL_DATE" || echo "Niets om te committen"
-          git push
