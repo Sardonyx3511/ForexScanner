@@ -1,4 +1,18 @@
+# Python cache (overal, ook in submappen)
 __pycache__/
+**/__pycache__/
 *.pyc
-scan_resultaat.csv
+
+# Editor
 .vscode/
+
+# Backtest-output (allemaal opnieuw te genereren door het script te draaien)
+backtest_*.csv
+pullback_*.csv
+breakout_backtest_*.csv
+oos_*.csv
+squeeze_compare_*.csv
+scan_resultaat.csv
+
+# Live scanner-output (wordt elke run overschreven, geen historie nodig in Git)
+breakout_resultaat.csv
