@@ -12,7 +12,12 @@ pullback_*.csv
 breakout_backtest_*.csv
 oos_*.csv
 squeeze_compare_*.csv
+mean_reversion_*.csv
+donchian_trades_*.csv
+donchian_filter_compare_*.csv
 scan_resultaat.csv
 
 # Live scanner-output (wordt elke run overschreven, geen historie nodig in Git)
 breakout_resultaat.csv
+pullback_resultaat.csv
+donchian_resultaat.csv
