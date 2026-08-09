@@ -1,14 +1,13 @@
 """
 Multi-asset backtest voor de Pullback-naar-EMA21-strategie - los te draaien.
 
-Test dezelfde strategie als pullback_backtest_run.py, maar over ALLE
-97 markten (forex + crypto + metals + indices + commodities) in plaats
-van alleen forex. Doel: de steekproef van de RSI-divergentie-subset
-vergroten (was 14-17 trades op forex alleen) om objectiever te kunnen
-beoordelen of het een echte edge is of ruis.
+Test de strategie over de volledige, bijgewerkte marktenlijst (213
+markten: forex + crypto + stocks + metals + indices + commodities).
+Dit is de tweede volledige validatieronde, met dezelfde robuustheids-
+checks die breakout+volume ook kreeg.
 
-ADX wordt bewust NIET als filter gebruikt - bleek bij de forex-only
-test averechts te werken voor deze strategie (zie eerdere resultaten).
+ADX wordt bewust NIET als filter gebruikt - bleek bij eerdere tests
+averechts te werken voor deze strategie.
 
 Gebruik:
     python pullback_backtest_multiasset.py
@@ -21,6 +20,7 @@ from config.settings import (
     ALL_PAIRS,
     FOREX_PAIRS,
     CRYPTO_PAIRS,
+    STOCKS_PAIRS,
     METALS_PAIRS,
     INDICES_PAIRS,
     COMMODITIES_PAIRS,
@@ -37,12 +37,13 @@ from utils.pullback_strategy import simulate_pullback_trades
 
 
 RR_VARIANTS = [1.0, 1.5, 2.0]
+ASSET_CLASSES = ["forex", "crypto", "stocks", "metals", "indices", "commodities"]
 
 
 print("===================================")
-print("   PULLBACK-STRATEGIE - MULTI-ASSET BACKTEST")
+print("   PULLBACK-STRATEGIE - MULTI-ASSET BACKTEST (v2, incl. stocks)")
 print(f"   {len(ALL_PAIRS)} markten totaal")
-print(f"   ({len(FOREX_PAIRS)} forex, {len(CRYPTO_PAIRS)} crypto, "
+print(f"   ({len(FOREX_PAIRS)} forex, {len(CRYPTO_PAIRS)} crypto, {len(STOCKS_PAIRS)} stocks, "
       f"{len(METALS_PAIRS)} metals, {len(INDICES_PAIRS)} indices, "
       f"{len(COMMODITIES_PAIRS)} commodities)")
 print(f"   RR-varianten: {RR_VARIANTS}")
@@ -105,8 +106,8 @@ for pair in ALL_PAIRS:
 
 
 print()
-print(f"Overgeslagen (te weinig data): {len(skipped)} -> {skipped}")
-print(f"Gefaald (fout tijdens download/analyse): {len(failed)} -> {failed}")
+print(f"Overgeslagen (te weinig data): {len(skipped)}")
+print(f"Gefaald: {len(failed)} -> {failed}")
 
 
 # ============================================
@@ -132,8 +133,7 @@ for rr in RR_VARIANTS:
 
 
 # ============================================
-# RSI-divergentie-subset, uitgesplitst per assetklasse (RR 1:2, beste
-# resultaat uit de forex-only test)
+# RSI-divergentie-subset, uitgesplitst per assetklasse (RR 1:2)
 # ============================================
 
 print()
@@ -145,7 +145,7 @@ rr_focus = 2.0
 div_trades_focus = [t for t in all_trades_by_rr[rr_focus] if t.get("rsi_divergence")]
 
 per_class_stats = []
-for cls in ["forex", "crypto", "metals", "indices", "commodities"]:
+for cls in ASSET_CLASSES:
     class_trades = [t for t in div_trades_focus if t["asset_class"] == cls]
     stats = compute_stats(class_trades, rr_focus)
     stats["Asset Class"] = cls
@@ -159,8 +159,6 @@ print(per_class_df[cols].to_string(index=False))
 
 # ============================================
 # LONG vs. SHORT - RSI-divergentie-subset, per RR
-# (checkt of het resultaat gedreven wordt door één richting, wat kan
-# wijzen op marktregime-bias i.p.v. een symmetrische edge)
 # ============================================
 
 print()
@@ -186,8 +184,6 @@ for rr in RR_VARIANTS:
 
 # ============================================
 # Met crypto vs. zonder crypto - RSI-divergentie-subset, per RR
-# (crypto was 5 jaar overwegend bullish; check of het resultaat ook
-# zonder crypto overeind blijft)
 # ============================================
 
 print("===================================")
@@ -218,7 +214,7 @@ for rr in RR_VARIANTS:
     trades_df = pd.DataFrame(all_trades_by_rr[rr])
     if not trades_df.empty:
         trades_df["pair"] = trades_df["pair"].apply(clean_pair_name)
-        trades_df.to_csv(f"pullback_multiasset_trades_rr{rr}.csv", index=False)
+        trades_df.to_csv(f"pullback_multiasset_v2_trades_rr{rr}.csv", index=False)
 
 print()
-print("CSV's opgeslagen: pullback_multiasset_trades_rrX.csv")
+print("CSV's opgeslagen: pullback_multiasset_v2_trades_rrX.csv")

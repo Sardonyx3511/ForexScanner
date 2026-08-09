@@ -18,6 +18,11 @@ ATR_MULTIPLIER = 2.0
 
 RR = 2.0
 
+# RR specifiek voor de pullback-strategie (SHORT + divergentie) - dit
+# kwam als beste uit de out-of-sample-validatie, apart van de RR die
+# de breakout-strategie gebruikt.
+PULLBACK_RR = 1.5
+
 # RSI-divergentie
 RSI_WINDOW = 14
 DIVERGENCE_LOOKBACK = 40

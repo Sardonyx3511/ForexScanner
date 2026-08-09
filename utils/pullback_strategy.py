@@ -2,9 +2,9 @@
 Pullback-naar-EMA21 swingstrategie.
 
 Kernidee: in plaats van te wachten op een laat momentum-bevestigingssignaal
-(zoals de Stochastic-cross in de hoofdstrategie), stap je in tijdens een
-gezonde terugval binnen een al bestaande trend - vroeger in de beweging,
-tegen een betere prijs.
+(zoals de Stochastic-cross in de oude hoofdstrategie), stap je in tijdens
+een gezonde terugval binnen een al bestaande trend - vroeger in de
+beweging, tegen een betere prijs.
 
 LONG-voorwaarden (SHORT is het spiegelbeeld):
 1. Weekly trend is bullish (herbruik van de KST-logica, lookahead-vrij)
@@ -16,6 +16,14 @@ LONG-voorwaarden (SHORT is het spiegelbeeld):
 Exit-logica (SL/TP) is identiek aan de hoofdstrategie (ATR-based stop,
 RR-based target), zodat de vergelijking eerlijk is: alleen het
 instapmoment verschilt, niet hoe de trade wordt afgesloten.
+
+BELANGRIJK - gevalideerde bevinding uit uitgebreid backtesten (213
+markten, meerdere RR's, out-of-sample gevalideerd over twee periodes):
+alleen de combinatie SHORT + RSI-divergentie bleek consistent
+winstgevend. LONG-signalen (met of zonder divergentie) waren
+verlieslatend. De live-functie hieronder geeft daarom UITSLUITEND
+SHORT-signalen met divergentie terug - dit is een bewuste, data-
+gedreven keuze, geen omissie.
 """
 
 import pandas as pd
@@ -69,20 +77,65 @@ def _determine_pullback_signal(df, i, ema_slope_lookback=5, rsi_low=35, rsi_high
     return "-"
 
 
+def check_latest_pullback_signal(df, atr_multiplier, rr,
+                                  ema_slope_lookback=5, rsi_low=35, rsi_high=60,
+                                  divergence_lookback=40, divergence_order=3):
+    """
+    Checkt ALLEEN de laatste dag van de data op een pullback-signaal.
+    Voor gebruik in de live scanner (main.py).
+
+    Geeft UITSLUITEND SHORT-signalen terug die ook RSI-divergentie
+    hebben - dit is de enige combinatie die in uitgebreid backtesten
+    (213 markten, out-of-sample gevalideerd) consistent winstgevend
+    bleek. LONG-signalen worden bewust genegeerd.
+
+    Geeft None terug als er geen (geldig) signaal is.
+    """
+
+    i = len(df) - 1
+
+    if i < max(divergence_lookback, ema_slope_lookback) + 1:
+        return None
+
+    row = df.iloc[i]
+
+    entry = _determine_pullback_signal(df, i, ema_slope_lookback, rsi_low, rsi_high)
+
+    if entry != "SHORT":
+        return None
+
+    bullish_div, bearish_div = detect_rsi_divergence(
+        df.iloc[: i + 1], lookback=divergence_lookback, order=divergence_order
+    )
+
+    if not bearish_div:
+        return None
+
+    if pd.isna(row["ATR"]) or row["ATR"] <= 0:
+        return None
+
+    stop_loss = calculate_stop_loss(row["Close"], row["ATR"], atr_multiplier, entry)
+    take_profit = calculate_take_profit(row["Close"], stop_loss, rr, entry)
+
+    return {
+        "direction": entry,
+        "entry_price": row["Close"],
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "rsi_divergence": True,
+        "data_date": df.index[i],
+    }
+
+
 def simulate_pullback_trades(df, pair, atr_multiplier, rr,
                               ema_slope_lookback=5, rsi_low=35, rsi_high=60,
-                              divergence_lookback=40, divergence_order=3,
-                              adx_min=25):
+                              divergence_lookback=40, divergence_order=3):
     """
     Loopt dag voor dag door de historische data en simuleert trades
-    volgens de pullback-strategie. Zelfde exit-mechanisme (SL/TP) als
-    de hoofdstrategie, zodat de vergelijking eerlijk is.
-
-    Elke trade krijgt ook 'rsi_divergence' en 'adx_strong' mee, zodat
-    achteraf te analyseren is of deze kenmerken samenhangen met betere
-    uitkomsten (net als bij de hoofdstrategie). Dit zijn GEEN harde
-    entry-filters hier, puur tracking voor de vergelijking - zo kunnen
-    we objectief meten of ze waarde toevoegen voor we ze verplicht maken.
+    volgens de pullback-strategie (voor backtesting - LONG en SHORT
+    worden allebei gesimuleerd zodat je ze kunt vergelijken, in
+    tegenstelling tot check_latest_pullback_signal die alleen SHORT
+    teruggeeft voor live gebruik).
     """
 
     trades = []
@@ -143,8 +196,6 @@ def simulate_pullback_trades(df, pair, atr_multiplier, rr,
                 or (entry == "SHORT" and bearish_div)
             )
 
-            adx_strong = (not pd.isna(row["ADX"])) and row["ADX"] >= adx_min
-
             position = {
                 "pair": pair,
                 "direction": entry,
@@ -154,7 +205,6 @@ def simulate_pullback_trades(df, pair, atr_multiplier, rr,
                 "take_profit": take_profit,
                 "entry_bar": i,
                 "rsi_divergence": rsi_divergence,
-                "adx_strong": adx_strong,
             }
 
     if position is not None:
