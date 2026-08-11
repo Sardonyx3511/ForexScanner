@@ -39,8 +39,45 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
+TELEGRAM_MAX_LENGTH = 4000  # Telegram's limiet is 4096, met wat marge
+
+
+def split_message(text, max_length=TELEGRAM_MAX_LENGTH):
+    """
+    Splitst een lang bericht in meerdere delen die elk onder Telegram's
+    tekenlimiet blijven. Splitst op regel-grenzen (nooit midden in een
+    regel), zodat de opmaak (bijv. *vetgedrukt*) niet kapotgaat.
+    """
+
+    lines = text.split("\n")
+    chunks = []
+    current_chunk = []
+    current_length = 0
+
+    for line in lines:
+        line_length = len(line) + 1  # +1 voor de newline
+
+        if current_length + line_length > max_length and current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = []
+            current_length = 0
+
+        current_chunk.append(line)
+        current_length += line_length
+
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+
+    return chunks
+
+
 def send_telegram_message(text):
-    """Stuurt een bericht naar Telegram. Print een waarschuwing als config ontbreekt."""
+    """
+    Stuurt een bericht naar Telegram. Splitst automatisch op in
+    meerdere berichten als de tekst Telegram's limiet (4096 tekens)
+    overschrijdt - anders zou het HELE bericht geweigerd worden,
+    inclusief het deel dat wel binnen de limiet paste.
+    """
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️  TELEGRAM_TOKEN of TELEGRAM_CHAT_ID ontbreekt, bericht wordt niet verstuurd.")
@@ -48,24 +85,35 @@ def send_telegram_message(text):
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True
-    }
+    chunks = split_message(text)
 
-    try:
-        response = requests.post(url, data=payload, timeout=15)
+    if len(chunks) > 1:
+        print(f"ℹ️  Bericht is {len(text)} tekens, wordt opgesplitst in {len(chunks)} delen.")
 
-        if response.status_code == 200:
-            print("✅ Telegram-bericht verstuurd.")
-        else:
-            print(f"⚠️  Telegram gaf een foutcode terug: {response.status_code}")
-            print(response.text)
+    for idx, chunk in enumerate(chunks):
 
-    except Exception as e:
-        print(f"⚠️  Versturen naar Telegram mislukt: {e}")
+        # Voeg een deel-indicator toe als het bericht is opgesplitst
+        if len(chunks) > 1:
+            chunk = f"*(deel {idx + 1}/{len(chunks)})*\n\n{chunk}"
+
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": chunk,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+
+        try:
+            response = requests.post(url, data=payload, timeout=15)
+
+            if response.status_code == 200:
+                print(f"✅ Telegram-bericht verstuurd (deel {idx + 1}/{len(chunks)}).")
+            else:
+                print(f"⚠️  Telegram gaf een foutcode terug (deel {idx + 1}/{len(chunks)}): {response.status_code}")
+                print(response.text)
+
+        except Exception as e:
+            print(f"⚠️  Versturen naar Telegram mislukt (deel {idx + 1}/{len(chunks)}): {e}")
 
 
 def determine_position_size(asset_class, entry_price, stop_loss, pair):
