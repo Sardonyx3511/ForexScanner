@@ -11,6 +11,7 @@ from utils.breakout_strategy import check_latest_breakout_signal, prepare_breako
 from utils.pullback_strategy import check_latest_pullback_signal
 from utils.donchian_strategy import check_latest_donchian_signal
 from utils.donchian_indicator import add_donchian_channels
+from utils.tdi_shark_fin_strategy import check_recent_shark_fin_signals, add_tdi_indicators, add_long_term_emas
 
 
 print("\033c", end="")
@@ -24,6 +25,11 @@ print("===================================")
 
 
 scan_date = datetime.now().strftime("%d-%m-%Y %H:%M")
+
+# Hoeveel handelsdagen terug de TDI Shark Fin-check kijkt (5 = ongeveer
+# een week) - dit signaal is zeldzaam, dus we willen niet alleen
+# vandaag checken.
+SHARK_FIN_LOOKBACK_DAYS = 5
 
 
 # ============================================
@@ -123,7 +129,7 @@ def analyse(pair):
 
 
         if df.empty or len(df) < 150:
-            return None, None, None
+            return None, None, None, None
 
 
         asset_class = get_asset_class(pair)
@@ -131,6 +137,8 @@ def analyse(pair):
 
         df_prepared = prepare_breakout_data(df, rsi_window=RSI_WINDOW, ema_span=EMA_SPAN)
         df_prepared = add_donchian_channels(df_prepared, window=20)
+        df_prepared = add_tdi_indicators(df_prepared, rsi_period=13, band_period=34, band_dev=2)
+        df_prepared = add_long_term_emas(df_prepared, fast_span=50, slow_span=200)
 
         # =====================================
         # BREAKOUT / VOLUME-STRATEGIE
@@ -241,12 +249,66 @@ def analyse(pair):
                 "Position size": dc_position_size,
             }
 
-        return breakout_result, pullback_result, donchian_result
+        # =====================================
+        # TDI SHARK FIN - ONGEFILTERD (bullish én bearish getoond,
+        # met een label of het voldoet aan de gevalideerde criteria
+        # LONG + TSL-bevestigd + RSI-dal <= 30. SHORT is NOOIT
+        # gevalideerd gebleken, ongeacht filter - wordt dus altijd
+        # als 'niet-gevalideerd' getoond, niet weggefilterd.
+        #
+        # Checkt de afgelopen SHARK_FIN_LOOKBACK_DAYS dagen (i.p.v.
+        # alleen vandaag) - dit signaal is zeldzaam, dus een fin die
+        # een paar dagen geleden compleet werd mag niet gemist worden.
+        # =====================================
+        shark_signals = check_recent_shark_fin_signals(
+            df_prepared,
+            atr_multiplier=ATR_MULTIPLIER,
+            rr=RR,
+            lookback_days=SHARK_FIN_LOOKBACK_DAYS,
+        )
+
+        shark_results_for_pair = []
+
+        for shark_signal in shark_signals:
+
+            sf_position_size = determine_position_size(
+                asset_class, shark_signal["entry_price"], shark_signal["stop_loss"], pair
+            )
+
+            sf_sl_distance = round(abs(shark_signal["entry_price"] - shark_signal["stop_loss"]), 5)
+            sf_tp_distance = round(abs(shark_signal["take_profit"] - shark_signal["entry_price"]), 5)
+
+            is_validated = (
+                shark_signal["direction"] == "LONG"
+                and shark_signal["tsl_confirmed"]
+                and shark_signal["trigger_rsi_level"] <= 30
+            )
+
+            shark_results_for_pair.append({
+                "Pair": clean_name,
+                "Asset Class": asset_class,
+                "Direction": shark_signal["direction"],
+                "Entry": round(shark_signal["entry_price"], 5),
+                "Stop Loss": round(shark_signal["stop_loss"], 5),
+                "Take Profit": round(shark_signal["take_profit"], 5),
+                "SL afstand": sf_sl_distance,
+                "TP afstand": sf_tp_distance,
+                "SL pips (indicatief)": calc_pips(asset_class, pair, sf_sl_distance),
+                "TP pips (indicatief)": calc_pips(asset_class, pair, sf_tp_distance),
+                "TSL bevestigd": shark_signal["tsl_confirmed"],
+                "RSI piek/dal": shark_signal["trigger_rsi_level"],
+                "Gevalideerd (LONG+TSL+RSI<=30)": is_validated,
+                "Dagen geleden": shark_signal["days_ago"],
+                "Data datum": str(shark_signal["data_date"])[:10],
+                "Position size": sf_position_size,
+            })
+
+        return breakout_result, pullback_result, donchian_result, shark_results_for_pair
 
 
     except Exception:
 
-        return None, None, None
+        return None, None, None, None
 
 
 
@@ -254,6 +316,7 @@ def analyse(pair):
 breakout_results=[]
 pullback_results=[]
 donchian_results=[]
+shark_results=[]
 
 
 print(f"Scannen van {len(ALL_PAIRS)} markten...")
@@ -263,7 +326,7 @@ for pair in ALL_PAIRS:
     if DEBUG:
         print("Scan:", pair)
 
-    bo, pb, dc = analyse(pair)
+    bo, pb, dc, sf = analyse(pair)
 
     if bo:
         breakout_results.append(bo)
@@ -273,6 +336,9 @@ for pair in ALL_PAIRS:
 
     if dc:
         donchian_results.append(dc)
+
+    if sf:
+        shark_results.extend(sf)
 
 
 
@@ -290,6 +356,11 @@ if not donchian_results:
     pd.DataFrame(columns=["Pair","Asset Class","Direction","Entry","Stop Loss","Take Profit","Data datum","Position size"]).to_csv("donchian_resultaat.csv", index=False)
 else:
     pd.DataFrame(donchian_results).to_csv("donchian_resultaat.csv", index=False)
+
+if not shark_results:
+    pd.DataFrame(columns=["Pair","Asset Class","Direction","Entry","Stop Loss","Take Profit","TSL bevestigd","RSI piek/dal","Gevalideerd (LONG+TSL+RSI<=30)","Data datum","Position size"]).to_csv("shark_fin_resultaat.csv", index=False)
+else:
+    pd.DataFrame(shark_results).to_csv("shark_fin_resultaat.csv", index=False)
 
 
 
@@ -431,8 +502,53 @@ else:
     message_lines.append("Geen nieuwe Donchian-signalen")
 
 
+# =====================================
+# 4. TDI SHARK FIN WATCH - ongefilterd, met validatie-label per signaal
+# =====================================
+
 print()
-print("CSV's opgeslagen: breakout_resultaat.csv, pullback_resultaat.csv, donchian_resultaat.csv")
+print("🦈 TDI SHARK FIN WATCH (alle signalen - zelf monitoren)")
+print("-----------------------------------")
+
+message_lines.append("")
+message_lines.append("🦈 *TDI SHARK FIN WATCH (alle signalen - zelf monitoren)*")
+
+if shark_results:
+
+    for r in shark_results:
+
+        asset_tag = r["Asset Class"].upper()
+        pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
+        pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
+        validated_tag = "✅ GEVALIDEERD (LONG+TSL+RSI<=30)" if r["Gevalideerd (LONG+TSL+RSI<=30)"] else "⚠️ Niet-gevalideerd - zelf beoordelen"
+        dagen_tag = "vandaag" if r["Dagen geleden"] == 0 else f"{r['Dagen geleden']} dagen geleden"
+
+        print()
+        print(f"[{asset_tag}] {r['Pair']} {r['Direction']} ({dagen_tag})")
+        print(f"Entry      : {r['Entry']}")
+        print(f"Stop Loss  : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+        print(f"Take Profit: {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+        print(f"Size       : {r['Position size']}")
+        print(f"TSL bevestigd: {'Ja' if r['TSL bevestigd'] else 'Nee'} | RSI piek/dal: {r['RSI piek/dal']}")
+        print(validated_tag)
+
+        message_lines.append("")
+        message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}* ({dagen_tag})")
+        message_lines.append(f"Entry : {r['Entry']}")
+        message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+        message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+        message_lines.append(f"Size : {r['Position size']}")
+        message_lines.append(f"TSL: {'Ja' if r['TSL bevestigd'] else 'Nee'} | RSI: {r['RSI piek/dal']}")
+        message_lines.append(validated_tag)
+
+else:
+
+    print("Geen nieuwe shark fin-signalen")
+    message_lines.append("Geen nieuwe shark fin-signalen")
+
+
+print()
+print("CSV's opgeslagen: breakout_resultaat.csv, pullback_resultaat.csv, donchian_resultaat.csv, shark_fin_resultaat.csv")
 
 telegram_message = "\n".join(message_lines)
 send_telegram_message(telegram_message)

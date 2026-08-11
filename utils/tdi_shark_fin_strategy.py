@@ -1,0 +1,335 @@
+"""
+TDI (Traders Dynamic Index) Shark Fin-strategie.
+
+Kernidee: TDI bouwt Bollinger Bands NIET om de prijs, maar om de RSI-
+lijn zelf. Een 'shark fin' is een scherpe piek: de RSI schiet buiten
+zijn eigen band uit, en keert BINNEN ÉÉN CANDLE scherp terug naar
+binnen - een momentum-omkeersignaal.
+
+TWEE EXTRA, MEETBARE BEVESTIGINGEN (getrackt per trade, geen harde
+filters totdat objectief getest - zelfde aanpak als bij breakout/
+Donchian):
+
+1. TSL vs. RSI Price Line momentum-bevestiging:
+   - RSI Price Line (PL) = SMA(RSI, 2) - snelle gladstrijking
+   - Trade Signal Line (TSL) = SMA(RSI, 7) - tragere gladstrijking
+   - Bij een SHORT-fin: bevestigd als TSL boven de PL zit (momentum
+     draait al merkbaar omlaag)
+   - Bij een LONG-fin: bevestigd als TSL onder de PL zit
+
+2. EMA50/EMA200-confluence: prijs bevindt zich TUSSEN de 50- en
+   200-daagse EMA op het instapmoment.
+
+Exit: vast RR-veelvoud (ATR-based SL), zoals breakout/pullback/Donchian.
+"""
+
+import pandas as pd
+
+from utils.risk import calculate_stop_loss, calculate_take_profit
+
+
+def add_tdi_indicators(df, rsi_period=13, band_period=34, band_dev=2):
+    """
+    Voegt de RSI, de Bollinger Bands OM DE RSI, en de TDI Price
+    Line/Trade Signal Line toe (standaard TDI-instellingen).
+    """
+
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.ewm(alpha=1 / rsi_period, min_periods=rsi_period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / rsi_period, min_periods=rsi_period, adjust=False).mean()
+
+    rs = avg_gain / avg_loss
+    df["TDI_RSI"] = 100 - (100 / (1 + rs))
+
+    rsi_sma = df["TDI_RSI"].rolling(band_period).mean()
+    rsi_std = df["TDI_RSI"].rolling(band_period).std()
+
+    df["TDI_RSI_upper"] = rsi_sma + band_dev * rsi_std
+    df["TDI_RSI_lower"] = rsi_sma - band_dev * rsi_std
+
+    df["TDI_PL"] = df["TDI_RSI"].rolling(2).mean()
+    df["TDI_TSL"] = df["TDI_RSI"].rolling(7).mean()
+
+    return df
+
+
+def add_long_term_emas(df, fast_span=50, slow_span=200):
+    """Voegt EMA50 en EMA200 toe, voor de trend-confluence-check."""
+
+    df["EMA50"] = df["Close"].ewm(span=fast_span, adjust=False).mean()
+    df["EMA200"] = df["Close"].ewm(span=slow_span, adjust=False).mean()
+
+    return df
+
+
+def _determine_shark_fin_signal(df, i):
+    """
+    Bepaalt of er op dag i een TDI shark-fin-signaal is.
+    Geeft 'LONG', 'SHORT' of '-' terug.
+    """
+
+    if i < 1:
+        return "-"
+
+    row = df.iloc[i]
+    prev_row = df.iloc[i - 1]
+
+    if pd.isna(row["TDI_RSI"]) or pd.isna(row["TDI_RSI_upper"]) or pd.isna(row["TDI_RSI_lower"]):
+        return "-"
+
+    pierced_lower = prev_row["TDI_RSI"] < prev_row["TDI_RSI_lower"]
+    back_above_lower = row["TDI_RSI"] > row["TDI_RSI_lower"]
+
+    if pierced_lower and back_above_lower:
+        return "LONG"
+
+    pierced_upper = prev_row["TDI_RSI"] > prev_row["TDI_RSI_upper"]
+    back_below_upper = row["TDI_RSI"] < row["TDI_RSI_upper"]
+
+    if pierced_upper and back_below_upper:
+        return "SHORT"
+
+    return "-"
+
+
+def simulate_shark_fin_trades(df, pair, atr_multiplier, rr):
+    """
+    Loopt dag voor dag door de historische data en simuleert trades
+    volgens de TDI Shark Fin-strategie. Elke trade krijgt twee
+    filterbare kenmerken mee: tsl_confirmed en ema_confluence.
+    """
+
+    trades = []
+    position = None
+
+    min_bars = 200  # EMA200 heeft de langste opwarmperiode nodig
+
+    for i in range(min_bars, len(df)):
+
+        row = df.iloc[i]
+        date = df.index[i]
+
+        if position is not None:
+
+            exit_price = None
+            outcome = None
+
+            if position["direction"] == "LONG":
+                if row["Low"] <= position["stop_loss"]:
+                    exit_price = position["stop_loss"]
+                    outcome = "LOSS"
+                elif row["High"] >= position["take_profit"]:
+                    exit_price = position["take_profit"]
+                    outcome = "WIN"
+            else:
+                if row["High"] >= position["stop_loss"]:
+                    exit_price = position["stop_loss"]
+                    outcome = "LOSS"
+                elif row["Low"] <= position["take_profit"]:
+                    exit_price = position["take_profit"]
+                    outcome = "WIN"
+
+            if exit_price is not None:
+                position["exit_date"] = date
+                position["exit_price"] = exit_price
+                position["outcome"] = outcome
+                position["bars_held"] = i - position["entry_bar"]
+                trades.append(position)
+                position = None
+
+            continue
+
+        entry = _determine_shark_fin_signal(df, i)
+
+        if entry in ("LONG", "SHORT"):
+
+            if pd.isna(row["ATR"]) or row["ATR"] <= 0:
+                continue
+
+            prev_row = df.iloc[i - 1]
+
+            stop_loss = calculate_stop_loss(row["Close"], row["ATR"], atr_multiplier, entry)
+            take_profit = calculate_take_profit(row["Close"], stop_loss, rr, entry)
+
+            tsl_confirmed = False
+            if not pd.isna(row["TDI_TSL"]) and not pd.isna(row["TDI_PL"]):
+                if entry == "SHORT":
+                    tsl_confirmed = row["TDI_TSL"] > row["TDI_PL"]
+                else:
+                    tsl_confirmed = row["TDI_TSL"] < row["TDI_PL"]
+
+            ema_confluence = False
+            ema_trend_pullback = False
+            if not pd.isna(row["EMA50"]) and not pd.isna(row["EMA200"]):
+                low_ema = min(row["EMA50"], row["EMA200"])
+                high_ema = max(row["EMA50"], row["EMA200"])
+                ema_confluence = low_ema <= row["Close"] <= high_ema
+
+                # Verfijnde versie: prijs tussen de EMA's, MAAR ALLEEN als
+                # de EMA's ook de juiste trendrichting hebben - dit is een
+                # 'pullback in de trend', niet zomaar 'ergens tussenin'
+                if entry == "SHORT":
+                    # Bearish structuur: EMA50 onder EMA200
+                    ema_trend_pullback = ema_confluence and row["EMA50"] < row["EMA200"]
+                else:
+                    # Bullish structuur: EMA50 boven EMA200
+                    ema_trend_pullback = ema_confluence and row["EMA50"] > row["EMA200"]
+
+            # Kenmerk 3: hoe extreem was de RSI-piek/dal die de band doorbrak?
+            # (de band zelf past zich aan aan recente volatiliteit, dus
+            # 'buiten de band' garandeert geen absoluut extreme waarde -
+            # dit maakt een aparte, vaste drempel-check mogelijk)
+            trigger_rsi_level = prev_row["TDI_RSI"]
+
+            position = {
+                "pair": pair,
+                "direction": entry,
+                "entry_date": date,
+                "entry_price": row["Close"],
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "entry_bar": i,
+                "tsl_confirmed": tsl_confirmed,
+                "ema_confluence": ema_confluence,
+                "ema_trend_pullback": ema_trend_pullback,
+                "trigger_rsi_level": round(trigger_rsi_level, 2),
+            }
+
+    if position is not None:
+        position["exit_date"] = None
+        position["exit_price"] = None
+        position["outcome"] = "OPEN"
+        position["bars_held"] = None
+        trades.append(position)
+
+    return trades
+
+
+def check_recent_shark_fin_signals(df, atr_multiplier, rr, lookback_days=5):
+    """
+    Checkt de laatste 'lookback_days' dagen (standaard 5 handelsdagen,
+    ongeveer een week) op shark-fin-signalen, in plaats van alleen de
+    allerlaatste candle. Nodig omdat dit signaal zeldzaam is (~0,2
+    trades/week over alle markten) - een signaal dat een paar dagen
+    geleden compleet werd, mag je niet missen als de scan die
+    specifieke dag niet gecheckt is.
+
+    Geeft een LIJST van signalen terug (kan leeg zijn, kan meerdere
+    bevatten als er toevallig meerdere in het venster vallen). Elk
+    signaal krijgt een 'days_ago' veld mee.
+    """
+
+    results = []
+
+    last_index = len(df) - 1
+
+    if last_index < 200:
+        return results
+
+    start_index = max(200, last_index - lookback_days + 1)
+
+    for i in range(start_index, last_index + 1):
+
+        row = df.iloc[i]
+        prev_row = df.iloc[i - 1]
+
+        entry = _determine_shark_fin_signal(df, i)
+
+        if entry not in ("LONG", "SHORT"):
+            continue
+
+        if pd.isna(row["ATR"]) or row["ATR"] <= 0:
+            continue
+
+        stop_loss = calculate_stop_loss(row["Close"], row["ATR"], atr_multiplier, entry)
+        take_profit = calculate_take_profit(row["Close"], stop_loss, rr, entry)
+
+        tsl_confirmed = False
+        if not pd.isna(row["TDI_TSL"]) and not pd.isna(row["TDI_PL"]):
+            if entry == "SHORT":
+                tsl_confirmed = row["TDI_TSL"] > row["TDI_PL"]
+            else:
+                tsl_confirmed = row["TDI_TSL"] < row["TDI_PL"]
+
+        ema_confluence = False
+        ema_trend_pullback = False
+        if not pd.isna(row["EMA50"]) and not pd.isna(row["EMA200"]):
+            low_ema = min(row["EMA50"], row["EMA200"])
+            high_ema = max(row["EMA50"], row["EMA200"])
+            ema_confluence = low_ema <= row["Close"] <= high_ema
+            if entry == "SHORT":
+                ema_trend_pullback = ema_confluence and row["EMA50"] < row["EMA200"]
+            else:
+                ema_trend_pullback = ema_confluence and row["EMA50"] > row["EMA200"]
+
+        results.append({
+            "direction": entry,
+            "entry_price": row["Close"],
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "tsl_confirmed": tsl_confirmed,
+            "ema_confluence": ema_confluence,
+            "ema_trend_pullback": ema_trend_pullback,
+            "trigger_rsi_level": round(prev_row["TDI_RSI"], 2),
+            "data_date": df.index[i],
+            "days_ago": last_index - i,
+        })
+
+    return results
+
+
+def check_latest_shark_fin_signal(df, atr_multiplier, rr):
+    """Checkt ALLEEN de laatste dag op een TDI shark-fin-signaal."""
+
+    i = len(df) - 1
+
+    if i < 200:
+        return None
+
+    row = df.iloc[i]
+    prev_row = df.iloc[i - 1]
+
+    entry = _determine_shark_fin_signal(df, i)
+
+    if entry not in ("LONG", "SHORT"):
+        return None
+
+    if pd.isna(row["ATR"]) or row["ATR"] <= 0:
+        return None
+
+    stop_loss = calculate_stop_loss(row["Close"], row["ATR"], atr_multiplier, entry)
+    take_profit = calculate_take_profit(row["Close"], stop_loss, rr, entry)
+
+    tsl_confirmed = False
+    if not pd.isna(row["TDI_TSL"]) and not pd.isna(row["TDI_PL"]):
+        if entry == "SHORT":
+            tsl_confirmed = row["TDI_TSL"] > row["TDI_PL"]
+        else:
+            tsl_confirmed = row["TDI_TSL"] < row["TDI_PL"]
+
+    ema_confluence = False
+    ema_trend_pullback = False
+    if not pd.isna(row["EMA50"]) and not pd.isna(row["EMA200"]):
+        low_ema = min(row["EMA50"], row["EMA200"])
+        high_ema = max(row["EMA50"], row["EMA200"])
+        ema_confluence = low_ema <= row["Close"] <= high_ema
+
+        if entry == "SHORT":
+            ema_trend_pullback = ema_confluence and row["EMA50"] < row["EMA200"]
+        else:
+            ema_trend_pullback = ema_confluence and row["EMA50"] > row["EMA200"]
+
+    return {
+        "direction": entry,
+        "entry_price": row["Close"],
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "tsl_confirmed": tsl_confirmed,
+        "ema_confluence": ema_confluence,
+        "ema_trend_pullback": ema_trend_pullback,
+        "trigger_rsi_level": round(prev_row["TDI_RSI"], 2),
+        "data_date": df.index[i],
+    }
