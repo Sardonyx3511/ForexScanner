@@ -50,6 +50,10 @@ def add_tdi_indicators(df, rsi_period=13, band_period=34, band_dev=2):
     df["TDI_RSI_upper"] = rsi_sma + band_dev * rsi_std
     df["TDI_RSI_lower"] = rsi_sma - band_dev * rsi_std
 
+    # Market Base Line (MBL) - de 34-periode SMA van de RSI, dezelfde
+    # middenlijn die de volatiliteitsbanden gebruiken
+    df["TDI_MBL"] = rsi_sma
+
     df["TDI_PL"] = df["TDI_RSI"].rolling(2).mean()
     df["TDI_TSL"] = df["TDI_RSI"].rolling(7).mean()
 
@@ -179,10 +183,27 @@ def simulate_shark_fin_trades(df, pair, atr_multiplier, rr):
                     ema_trend_pullback = ema_confluence and row["EMA50"] > row["EMA200"]
 
             # Kenmerk 3: hoe extreem was de RSI-piek/dal die de band doorbrak?
-            # (de band zelf past zich aan aan recente volatiliteit, dus
-            # 'buiten de band' garandeert geen absoluut extreme waarde -
-            # dit maakt een aparte, vaste drempel-check mogelijk)
             trigger_rsi_level = prev_row["TDI_RSI"]
+
+            # Kenmerk 4: MBL-conditie (Market Base Line) - voor SHORT:
+            # TSL EN RSI zitten allebei onder de MBL, ÉN TSL heeft de
+            # RSI zojuist van onder naar boven gekruist (bearish
+            # kruising, niet alleen een statische positie). Voor LONG
+            # (spiegelbeeld): allebei boven de MBL, TSL kruist RSI van
+            # boven naar onder.
+            mbl_aligned = False
+            if (not pd.isna(row["TDI_TSL"]) and not pd.isna(row["TDI_MBL"])
+                    and not pd.isna(row["TDI_RSI"]) and not pd.isna(prev_row["TDI_TSL"])
+                    and not pd.isna(prev_row["TDI_RSI"])):
+
+                if entry == "SHORT":
+                    below_mbl = row["TDI_TSL"] < row["TDI_MBL"] and row["TDI_RSI"] < row["TDI_MBL"]
+                    crossed_up = prev_row["TDI_TSL"] <= prev_row["TDI_RSI"] and row["TDI_TSL"] > row["TDI_RSI"]
+                    mbl_aligned = below_mbl and crossed_up
+                else:
+                    above_mbl = row["TDI_TSL"] > row["TDI_MBL"] and row["TDI_RSI"] > row["TDI_MBL"]
+                    crossed_down = prev_row["TDI_TSL"] >= prev_row["TDI_RSI"] and row["TDI_TSL"] < row["TDI_RSI"]
+                    mbl_aligned = above_mbl and crossed_down
 
             position = {
                 "pair": pair,
@@ -193,6 +214,7 @@ def simulate_shark_fin_trades(df, pair, atr_multiplier, rr):
                 "take_profit": take_profit,
                 "entry_bar": i,
                 "tsl_confirmed": tsl_confirmed,
+                "mbl_aligned": mbl_aligned,
                 "ema_confluence": ema_confluence,
                 "ema_trend_pullback": ema_trend_pullback,
                 "trigger_rsi_level": round(trigger_rsi_level, 2),
@@ -265,12 +287,27 @@ def check_recent_shark_fin_signals(df, atr_multiplier, rr, lookback_days=5):
             else:
                 ema_trend_pullback = ema_confluence and row["EMA50"] > row["EMA200"]
 
+        mbl_aligned = False
+        if (not pd.isna(row["TDI_TSL"]) and not pd.isna(row["TDI_MBL"])
+                and not pd.isna(row["TDI_RSI"]) and not pd.isna(prev_row["TDI_TSL"])
+                and not pd.isna(prev_row["TDI_RSI"])):
+
+            if entry == "SHORT":
+                below_mbl = row["TDI_TSL"] < row["TDI_MBL"] and row["TDI_RSI"] < row["TDI_MBL"]
+                crossed_up = prev_row["TDI_TSL"] <= prev_row["TDI_RSI"] and row["TDI_TSL"] > row["TDI_RSI"]
+                mbl_aligned = below_mbl and crossed_up
+            else:
+                above_mbl = row["TDI_TSL"] > row["TDI_MBL"] and row["TDI_RSI"] > row["TDI_MBL"]
+                crossed_down = prev_row["TDI_TSL"] >= prev_row["TDI_RSI"] and row["TDI_TSL"] < row["TDI_RSI"]
+                mbl_aligned = above_mbl and crossed_down
+
         results.append({
             "direction": entry,
             "entry_price": row["Close"],
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "tsl_confirmed": tsl_confirmed,
+            "mbl_aligned": mbl_aligned,
             "ema_confluence": ema_confluence,
             "ema_trend_pullback": ema_trend_pullback,
             "trigger_rsi_level": round(prev_row["TDI_RSI"], 2),
@@ -322,12 +359,27 @@ def check_latest_shark_fin_signal(df, atr_multiplier, rr):
         else:
             ema_trend_pullback = ema_confluence and row["EMA50"] > row["EMA200"]
 
+    mbl_aligned = False
+    if (not pd.isna(row["TDI_TSL"]) and not pd.isna(row["TDI_MBL"])
+            and not pd.isna(row["TDI_RSI"]) and not pd.isna(prev_row["TDI_TSL"])
+            and not pd.isna(prev_row["TDI_RSI"])):
+
+        if entry == "SHORT":
+            below_mbl = row["TDI_TSL"] < row["TDI_MBL"] and row["TDI_RSI"] < row["TDI_MBL"]
+            crossed_up = prev_row["TDI_TSL"] <= prev_row["TDI_RSI"] and row["TDI_TSL"] > row["TDI_RSI"]
+            mbl_aligned = below_mbl and crossed_up
+        else:
+            above_mbl = row["TDI_TSL"] > row["TDI_MBL"] and row["TDI_RSI"] > row["TDI_MBL"]
+            crossed_down = prev_row["TDI_TSL"] >= prev_row["TDI_RSI"] and row["TDI_TSL"] < row["TDI_RSI"]
+            mbl_aligned = above_mbl and crossed_down
+
     return {
         "direction": entry,
         "entry_price": row["Close"],
         "stop_loss": stop_loss,
         "take_profit": take_profit,
         "tsl_confirmed": tsl_confirmed,
+        "mbl_aligned": mbl_aligned,
         "ema_confluence": ema_confluence,
         "ema_trend_pullback": ema_trend_pullback,
         "trigger_rsi_level": round(prev_row["TDI_RSI"], 2),
