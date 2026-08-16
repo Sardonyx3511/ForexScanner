@@ -1,46 +1,14 @@
-Pair,Asset Class,Direction,Entry,Stop Loss,Take Profit,SL afstand,TP afstand,SL pips (indicatief),TP pips (indicatief),TSL bevestigd,MBL bevestigd,RSI piek/dal,Gevalideerd (LONG+TSL+RSI<=30),Dagen geleden,Data datum,Position size
-USDZAR,forex,LONG,16.1855,15.798,16.9605,0.3875,0.77501,3875.0,7750.1,False,False,37.51,False,3,2026-08-11,-
-ANKRUSD,crypto,SHORT,0.00357,0.0038,0.00309,0.00024,0.00047,,,False,False,60.06,False,4,2026-08-10,212230.563 units
-ATOMUSD,crypto,SHORT,1.39764,1.49541,1.2021,0.09777,0.19554,,,False,False,56.75,False,2,2026-08-12,511.3954 units
-ATOMUSD,crypto,SHORT,1.493,1.60757,1.26387,0.11457,0.22913,,,False,False,62.49,False,0,2026-08-14,436.4311 units
-BANDUSD,crypto,SHORT,0.16818,0.18339,0.13775,0.01521,0.03043,,,False,False,65.67,False,4,2026-08-10,3286.3322 units
-BNBUSD,crypto,SHORT,598.68732,622.81235,550.43726,24.12503,48.25006,,,False,False,64.54,False,4,2026-08-10,2.0725 units
-BNBUSD,crypto,SHORT,609.67981,634.50537,560.02868,24.82556,49.65113,,,False,False,70.36,False,2,2026-08-12,2.0141 units
-CHZUSD,crypto,SHORT,0.01295,0.01421,0.01042,0.00126,0.00253,,,False,False,35.49,False,4,2026-08-10,39571.9755 units
-CROUSD,crypto,LONG,0.04673,0.04297,0.05423,0.00375,0.0075,,,False,False,20.22,False,2,2026-08-12,13325.0127 units
-CRVUSD,crypto,SHORT,0.25394,0.27991,0.20199,0.02597,0.05195,,,False,False,78.87,False,1,2026-08-13,1925.0732 units
-CVXUSD,crypto,SHORT,1.67959,1.86255,1.31369,0.18295,0.3659,,,False,False,77.06,False,3,2026-08-11,273.2963 units
-DOGEUSD,crypto,SHORT,0.06959,0.07384,0.0611,0.00425,0.00849,,,False,False,53.1,False,2,2026-08-12,11778.3505 units
-FLOWUSD,crypto,SHORT,0.03264,0.03625,0.02542,0.00361,0.00722,,,False,False,70.31,False,2,2026-08-12,13859.4747 units
-GMXUSD,crypto,SHORT,0.00017,0.00018,0.00014,1e-05,2e-05,,,False,False,100.0,False,1,2023-11-29,4199840.3221 units
-ICPUSD,crypto,SHORT,2.23969,2.41512,1.88883,0.17543,0.35085,,,False,False,63.39,False,3,2026-08-11,285.0186 units
-ICXUSD,crypto,SHORT,0.02131,0.02374,0.01646,0.00243,0.00486,,,True,False,51.86,False,3,2026-08-11,20596.7004 units
-INJUSD,crypto,LONG,4.38347,3.90705,5.33632,0.47642,0.95285,,,False,False,33.25,False,4,2026-08-10,104.9486 units
-IOTAUSD,crypto,SHORT,0.03381,0.03685,0.02773,0.00304,0.00608,,,False,False,51.86,False,4,2026-08-10,16441.8695 units
-JASMYUSD,crypto,LONG,0.00399,0.00367,0.00463,0.00032,0.00064,,,False,False,31.0,False,3,2026-08-11,155973.2955 units
-LSKUSD,crypto,SHORT,0.07977,0.09261,0.0541,0.01283,0.02567,,,False,False,59.57,False,2,2026-08-12,3895.7923 units
-MANAUSD,crypto,LONG,0.06439,0.05989,0.07338,0.0045,0.00899,,,False,False,33.84,False,1,2026-08-13,11123.4506 units
-NEOUSD,crypto,LONG,1.68448,1.56445,1.92454,0.12003,0.24006,,,False,False,24.67,False,1,2026-08-13,416.5567 units
-OKBUSD,crypto,SHORT,94.70964,99.14527,85.83838,4.43563,8.87126,,,False,False,80.23,False,3,2026-08-11,11.2724 units
-POLUSD,crypto,SHORT,0.00824,0.00975,0.00522,0.00151,0.00302,,,False,False,65.08,False,3,2023-10-28,33084.8081 units
-RENDERUSD,crypto,LONG,1.26319,1.1707,1.44815,0.09248,0.18496,,,False,False,26.97,False,3,2026-08-11,540.6497 units
-RUNEUSD,crypto,LONG,0.42571,0.40189,0.47335,0.02382,0.04764,,,False,False,42.5,False,1,2026-08-13,2098.8595 units
-SNXUSD,crypto,LONG,0.1977,0.17953,0.23403,0.01817,0.03633,,,False,False,34.5,False,0,2026-08-14,2752.184 units
-THETAUSD,crypto,SHORT,0.14011,0.15086,0.11861,0.01075,0.0215,,,False,False,59.83,False,4,2026-08-10,4650.3499 units
-TRXUSD,crypto,SHORT,0.33427,0.34128,0.32026,0.007,0.01401,,,False,False,67.6,False,1,2026-08-13,7137.8847 units
-UMAUSD,crypto,SHORT,0.33054,0.36034,0.27095,0.0298,0.05959,,,False,False,47.83,False,3,2026-08-11,1678.1288 units
-VETUSD,crypto,LONG,0.00453,0.00421,0.00516,0.00032,0.00063,,,False,False,35.74,False,1,2026-08-13,158177.5148 units
-XMRUSD,crypto,SHORT,396.80576,424.57019,341.27688,27.76444,55.52887,,,False,False,71.61,False,4,2026-08-10,1.8009 units
-XVGUSD,crypto,SHORT,0.00212,0.00235,0.00165,0.00024,0.00047,,,False,False,59.85,False,3,2026-08-11,212613.5002 units
-ZENUSD,crypto,SHORT,4.08819,4.43663,3.39132,0.34844,0.69687,,,False,False,56.81,False,3,2026-08-11,143.4986 units
-DIS,stocks,SHORT,103.18,107.94689,93.64621,4.76689,9.53379,,,False,False,67.71,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
-APA,stocks,SHORT,40.62,43.65708,34.54584,3.03708,6.07416,,,False,False,69.82,False,3,2026-08-11,$50.0 risico (check contractgrootte bij broker)
-WMT,stocks,SHORT,115.27,120.27691,105.25616,5.00692,10.01383,,,False,False,59.4,False,0,2026-08-14,$50.0 risico (check contractgrootte bij broker)
-NFLX,stocks,SHORT,78.16,82.82451,68.83098,4.66451,9.32902,,,False,False,63.24,False,0,2026-08-14,$50.0 risico (check contractgrootte bij broker)
-EBAY,stocks,LONG,104.58,97.0615,119.61701,7.5185,15.03701,,,False,False,35.04,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
-GOLD,metals,SHORT,4363.6001,4513.03341,4064.73347,149.43331,298.86662,,,False,False,69.84,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
-SILVER,metals,SHORT,64.873,68.13992,58.33917,3.26691,6.53383,,,False,False,64.62,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
-PLATINUM,metals,SHORT,1744.5,1805.50228,1622.49544,61.00228,122.00456,,,False,False,61.63,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
-FRANCE40,indices,SHORT,8726.03027,8899.44672,8379.19738,173.41645,346.83289,,,False,False,70.68,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
-AUSTRALIA200,indices,SHORT,9232.59961,9398.81554,8900.16776,166.21593,332.43185,,,False,False,75.71,False,3,2026-08-10,$50.0 risico (check contractgrootte bij broker)
-SUGAR,commodities,SHORT,16.42,17.27724,14.70551,0.85724,1.71449,,,False,False,81.43,False,2,2026-08-12,$50.0 risico (check contractgrootte bij broker)
+Pair,Asset Class,Direction,Entry,Stop Loss,Take Profit,SL afstand,TP afstand,SL pips (indicatief),TP pips (indicatief),TSL bevestigd,RSI piek/dal,Gevalideerd (LONG+TSL+RSI<=30),Dagen geleden,Data datum,Position size
+USDMXN,forex,LONG,17.015,16.81122,17.42256,0.20378,0.40756,2037.8,4075.6,False,26.21,False,0,2026-08-16,-
+USDZAR,forex,LONG,16.1855,15.798,16.9605,0.3875,0.77501,3875.0,7750.1,False,37.51,False,4,2026-08-11,-
+DIS,stocks,SHORT,103.18,107.94689,93.64621,4.76689,9.53379,,,False,67.71,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
+APA,stocks,SHORT,40.62,43.65708,34.54584,3.03708,6.07416,,,False,69.82,False,3,2026-08-11,$50.0 risico (check contractgrootte bij broker)
+WMT,stocks,SHORT,115.27,120.2762,105.25759,5.0062,10.0124,,,False,59.4,False,0,2026-08-14,$50.0 risico (check contractgrootte bij broker)
+NFLX,stocks,SHORT,78.16,82.82453,68.83096,4.66452,9.32905,,,False,63.24,False,0,2026-08-14,$50.0 risico (check contractgrootte bij broker)
+EBAY,stocks,LONG,104.58,97.0615,119.61701,7.5185,15.03701,,,False,35.04,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
+GOLD,metals,SHORT,4363.6001,4513.03341,4064.73347,149.43331,298.86662,,,False,69.84,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
+SILVER,metals,SHORT,64.873,68.13992,58.33917,3.26691,6.53383,,,False,64.62,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
+PLATINUM,metals,SHORT,1744.5,1805.50228,1622.49544,61.00228,122.00456,,,False,61.63,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
+FRANCE40,indices,SHORT,8726.03027,8899.44672,8379.19738,173.41645,346.83289,,,False,70.68,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
+AUSTRALIA200,indices,SHORT,9232.59961,9398.81554,8900.16776,166.21593,332.43185,,,False,75.71,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
+SUGAR,commodities,SHORT,16.42,17.27724,14.70551,0.85724,1.71449,,,False,81.43,False,2,2026-08-12,$50.0 risico (check contractgrootte bij broker)

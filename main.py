@@ -17,9 +17,10 @@ from utils.tdi_shark_fin_strategy import check_recent_shark_fin_signals, add_tdi
 print("\033c", end="")
 
 print("===================================")
-print("      FOREX SCANNER v7.4")
-print("      TDI SHARK FIN (focus-modus)")
-print("      Breakout/Pullback/Donchian tijdelijk uit")
+print("      FOREX SCANNER v5.0")
+print("      BREAKOUT/VOLUME + PULLBACK (SHORT+DIV)")
+print("      Beide strategieën gevalideerd: meerdere")
+print("      RR's, multi-asset, out-of-sample")
 print("===================================")
 
 
@@ -42,12 +43,19 @@ ENABLE_PULLBACK_WATCH = False
 ENABLE_DONCHIAN_WATCH = False
 ENABLE_SHARK_FIN_WATCH = True
 
+# Crypto tijdelijk uitgesloten van de scan - gaf te veel signalen om
+# overzichtelijk te monitoren. Op False zetten om crypto weer mee te nemen.
+EXCLUDE_CRYPTO = True
+
+SCAN_PAIRS = [p for p in ALL_PAIRS if get_asset_class(p) != "crypto"] if EXCLUDE_CRYPTO else ALL_PAIRS
+
 
 # ============================================
 # TELEGRAM CONFIG
 # ============================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
 
 TELEGRAM_MAX_LENGTH = 4000  # Telegram's limiet is 4096, met wat marge
 
@@ -85,7 +93,8 @@ def send_telegram_message(text):
     """
     Stuurt een bericht naar Telegram. Splitst automatisch op in
     meerdere berichten als de tekst Telegram's limiet (4096 tekens)
-    overschrijdt.
+    overschrijdt - anders zou het HELE bericht geweigerd worden,
+    inclusief het deel dat wel binnen de limiet paste.
     """
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -101,6 +110,7 @@ def send_telegram_message(text):
 
     for idx, chunk in enumerate(chunks):
 
+        # Voeg een deel-indicator toe als het bericht is opgesplitst
         if len(chunks) > 1:
             chunk = f"*(deel {idx + 1}/{len(chunks)})*\n\n{chunk}"
 
@@ -164,11 +174,13 @@ def calc_pips(asset_class, pair, distance):
 
 def analyse(pair):
     """
-    Download data één keer per paar, en checkt 'm tegen de actieve
-    strategieën (bepaald door de ENABLE_*-schakelaars bovenaan).
+    Download data één keer per paar, en checkt 'm tegen BEIDE
+    gevalideerde strategieën: breakout/volume en pullback (SHORT+
+    divergentie). prepare_breakout_data levert alle indicatoren die
+    beide strategieën nodig hebben (superset), dus geen dubbele
+    download of voorbereiding nodig.
 
-    Geeft (breakout_result, pullback_result, donchian_result,
-    shark_results_for_pair) terug.
+    Geeft (breakout_result, pullback_result) terug - beide kunnen None zijn.
     """
 
     try:
@@ -182,7 +194,7 @@ def analyse(pair):
         )
 
 
-        if df.empty or len(df) < 220:
+        if df.empty or len(df) < 150:
             return None, None, None, None
 
 
@@ -316,59 +328,52 @@ def analyse(pair):
         # gevalideerd gebleken, ongeacht filter - wordt dus altijd
         # als 'niet-gevalideerd' getoond, niet weggefilterd.
         #
-        # MBL-conditie (TSL en RSI allebei aan dezelfde kant van de
-        # Market Base Line) wordt getoond als extra diagnostisch
-        # kenmerk - nog GEEN onderdeel van de gevalideerde criteria,
-        # totdat dit apart is gebacktest.
-        #
         # Checkt de afgelopen SHARK_FIN_LOOKBACK_DAYS dagen (i.p.v.
-        # alleen vandaag) - dit signaal is zeldzaam.
+        # alleen vandaag) - dit signaal is zeldzaam, dus een fin die
+        # een paar dagen geleden compleet werd mag niet gemist worden.
         # =====================================
+        shark_signals = check_recent_shark_fin_signals(
+            df_prepared,
+            atr_multiplier=ATR_MULTIPLIER,
+            rr=RR,
+            lookback_days=SHARK_FIN_LOOKBACK_DAYS,
+        )
+
         shark_results_for_pair = []
 
-        if ENABLE_SHARK_FIN_WATCH:
+        for shark_signal in shark_signals:
 
-            shark_signals = check_recent_shark_fin_signals(
-                df_prepared,
-                atr_multiplier=ATR_MULTIPLIER,
-                rr=RR,
-                lookback_days=SHARK_FIN_LOOKBACK_DAYS,
+            sf_position_size = determine_position_size(
+                asset_class, shark_signal["entry_price"], shark_signal["stop_loss"], pair
             )
 
-            for shark_signal in shark_signals:
+            sf_sl_distance = round(abs(shark_signal["entry_price"] - shark_signal["stop_loss"]), 5)
+            sf_tp_distance = round(abs(shark_signal["take_profit"] - shark_signal["entry_price"]), 5)
 
-                sf_position_size = determine_position_size(
-                    asset_class, shark_signal["entry_price"], shark_signal["stop_loss"], pair
-                )
+            is_validated = (
+                shark_signal["direction"] == "LONG"
+                and shark_signal["tsl_confirmed"]
+                and shark_signal["trigger_rsi_level"] <= 30
+            )
 
-                sf_sl_distance = round(abs(shark_signal["entry_price"] - shark_signal["stop_loss"]), 5)
-                sf_tp_distance = round(abs(shark_signal["take_profit"] - shark_signal["entry_price"]), 5)
-
-                is_validated = (
-                    shark_signal["direction"] == "LONG"
-                    and shark_signal["tsl_confirmed"]
-                    and shark_signal["trigger_rsi_level"] <= 30
-                )
-
-                shark_results_for_pair.append({
-                    "Pair": clean_name,
-                    "Asset Class": asset_class,
-                    "Direction": shark_signal["direction"],
-                    "Entry": round(shark_signal["entry_price"], 5),
-                    "Stop Loss": round(shark_signal["stop_loss"], 5),
-                    "Take Profit": round(shark_signal["take_profit"], 5),
-                    "SL afstand": sf_sl_distance,
-                    "TP afstand": sf_tp_distance,
-                    "SL pips (indicatief)": calc_pips(asset_class, pair, sf_sl_distance),
-                    "TP pips (indicatief)": calc_pips(asset_class, pair, sf_tp_distance),
-                    "TSL bevestigd": shark_signal["tsl_confirmed"],
-                    "MBL bevestigd": shark_signal.get("mbl_aligned", False),
-                    "RSI piek/dal": shark_signal["trigger_rsi_level"],
-                    "Gevalideerd (LONG+TSL+RSI<=30)": is_validated,
-                    "Dagen geleden": shark_signal["days_ago"],
-                    "Data datum": str(shark_signal["data_date"])[:10],
-                    "Position size": sf_position_size,
-                })
+            shark_results_for_pair.append({
+                "Pair": clean_name,
+                "Asset Class": asset_class,
+                "Direction": shark_signal["direction"],
+                "Entry": round(shark_signal["entry_price"], 5),
+                "Stop Loss": round(shark_signal["stop_loss"], 5),
+                "Take Profit": round(shark_signal["take_profit"], 5),
+                "SL afstand": sf_sl_distance,
+                "TP afstand": sf_tp_distance,
+                "SL pips (indicatief)": calc_pips(asset_class, pair, sf_sl_distance),
+                "TP pips (indicatief)": calc_pips(asset_class, pair, sf_tp_distance),
+                "TSL bevestigd": shark_signal["tsl_confirmed"],
+                "RSI piek/dal": shark_signal["trigger_rsi_level"],
+                "Gevalideerd (LONG+TSL+RSI<=30)": is_validated,
+                "Dagen geleden": shark_signal["days_ago"],
+                "Data datum": str(shark_signal["data_date"])[:10],
+                "Position size": sf_position_size,
+            })
 
         return breakout_result, pullback_result, donchian_result, shark_results_for_pair
 
@@ -386,9 +391,10 @@ donchian_results=[]
 shark_results=[]
 
 
-print(f"Scannen van {len(ALL_PAIRS)} markten...")
+crypto_note = " (crypto uitgesloten)" if EXCLUDE_CRYPTO else ""
+print(f"Scannen van {len(SCAN_PAIRS)} markten{crypto_note}...")
 
-for pair in ALL_PAIRS:
+for pair in SCAN_PAIRS:
 
     if DEBUG:
         print("Scan:", pair)
@@ -425,7 +431,7 @@ else:
     pd.DataFrame(donchian_results).to_csv("donchian_resultaat.csv", index=False)
 
 if not shark_results:
-    pd.DataFrame(columns=["Pair","Asset Class","Direction","Entry","Stop Loss","Take Profit","TSL bevestigd","MBL bevestigd","RSI piek/dal","Gevalideerd (LONG+TSL+RSI<=30)","Dagen geleden","Data datum","Position size"]).to_csv("shark_fin_resultaat.csv", index=False)
+    pd.DataFrame(columns=["Pair","Asset Class","Direction","Entry","Stop Loss","Take Profit","TSL bevestigd","RSI piek/dal","Gevalideerd (LONG+TSL+RSI<=30)","Data datum","Position size"]).to_csv("shark_fin_resultaat.csv", index=False)
 else:
     pd.DataFrame(shark_results).to_csv("shark_fin_resultaat.csv", index=False)
 
@@ -545,99 +551,87 @@ else:
 # 3. DONCHIAN WATCH - eigen bericht
 # =====================================
 
-if ENABLE_DONCHIAN_WATCH:
+print()
+print("📈 DONCHIAN WATCH (Channel Breakout, LONG-only) - GEVALIDEERD")
+print("-----------------------------------")
 
-    print()
-    print("📈 DONCHIAN WATCH (Channel Breakout, LONG-only) - GEVALIDEERD")
-    print("-----------------------------------")
+donchian_message_lines = [header_line, "", "📈 *DONCHIAN WATCH (Channel Breakout, LONG-only) - GEVALIDEERD*"]
 
-    donchian_message_lines = [header_line, "", "📈 *DONCHIAN WATCH (Channel Breakout, LONG-only) - GEVALIDEERD*"]
+if donchian_results:
 
-    if donchian_results:
+    for r in donchian_results:
 
-        for r in donchian_results:
+        asset_tag = r["Asset Class"].upper()
+        pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
+        pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
 
-            asset_tag = r["Asset Class"].upper()
-            pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
-            pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
+        print()
+        print(f"[{asset_tag}] {r['Pair']} {r['Direction']}")
+        print(f"Entry      : {r['Entry']}")
+        print(f"Stop Loss  : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+        print(f"Take Profit: {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+        print(f"Size       : {r['Position size']}")
+        print(f"Databatum  : {r['Data datum']}")
 
-            print()
-            print(f"[{asset_tag}] {r['Pair']} {r['Direction']}")
-            print(f"Entry      : {r['Entry']}")
-            print(f"Stop Loss  : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
-            print(f"Take Profit: {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
-            print(f"Size       : {r['Position size']}")
-            print(f"Databatum  : {r['Data datum']}")
-
-            donchian_message_lines.append("")
-            donchian_message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}*")
-            donchian_message_lines.append(f"Entry : {r['Entry']}")
-            donchian_message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
-            donchian_message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
-            donchian_message_lines.append(f"Size : {r['Position size']}")
-
-    else:
-
-        print("Geen nieuwe Donchian-signalen")
-        donchian_message_lines.append("Geen nieuwe Donchian-signalen")
-
-    send_telegram_message("\n".join(donchian_message_lines))
+        donchian_message_lines.append("")
+        donchian_message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}*")
+        donchian_message_lines.append(f"Entry : {r['Entry']}")
+        donchian_message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+        donchian_message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+        donchian_message_lines.append(f"Size : {r['Position size']}")
 
 else:
-    print()
-    print("📈 DONCHIAN WATCH - uitgeschakeld (ENABLE_DONCHIAN_WATCH=False)")
+
+    print("Geen nieuwe Donchian-signalen")
+    donchian_message_lines.append("Geen nieuwe Donchian-signalen")
+
+send_telegram_message("\n".join(donchian_message_lines))
 
 
 # =====================================
 # 4. TDI SHARK FIN WATCH - eigen bericht (ongefilterd, met validatie-label)
 # =====================================
 
-if ENABLE_SHARK_FIN_WATCH:
+print()
+print("🦈 TDI SHARK FIN WATCH (alle signalen - zelf monitoren)")
+print("-----------------------------------")
 
-    print()
-    print("🦈 TDI SHARK FIN WATCH (alle signalen - zelf monitoren)")
-    print("-----------------------------------")
+shark_message_lines = [header_line, "", "🦈 *TDI SHARK FIN WATCH (alle signalen - zelf monitoren)*"]
 
-    shark_message_lines = [header_line, "", "🦈 *TDI SHARK FIN WATCH (alle signalen - zelf monitoren)*"]
+if shark_results:
 
-    if shark_results:
+    for r in shark_results:
 
-        for r in shark_results:
+        asset_tag = r["Asset Class"].upper()
+        pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
+        pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
+        validated_tag = "✅ GEVALIDEERD (LONG+TSL+RSI<=30)" if r["Gevalideerd (LONG+TSL+RSI<=30)"] else "⚠️ Niet-gevalideerd - zelf beoordelen"
+        dagen_tag = "vandaag" if r["Dagen geleden"] == 0 else f"{r['Dagen geleden']} dagen geleden"
 
-            asset_tag = r["Asset Class"].upper()
-            pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
-            pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
-            validated_tag = "✅ GEVALIDEERD (LONG+TSL+RSI<=30)" if r["Gevalideerd (LONG+TSL+RSI<=30)"] else "⚠️ Niet-gevalideerd - zelf beoordelen"
-            dagen_tag = "vandaag" if r["Dagen geleden"] == 0 else f"{r['Dagen geleden']} dagen geleden"
+        print()
+        print(f"[{asset_tag}] {r['Pair']} {r['Direction']} ({dagen_tag})")
+        print(f"Entry      : {r['Entry']}")
+        print(f"Stop Loss  : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+        print(f"Take Profit: {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+        print(f"Size       : {r['Position size']}")
+        print(f"TSL bevestigd: {'Ja' if r['TSL bevestigd'] else 'Nee'} | RSI piek/dal: {r['RSI piek/dal']}")
+        print(validated_tag)
 
-            print()
-            print(f"[{asset_tag}] {r['Pair']} {r['Direction']} ({dagen_tag})")
-            print(f"Entry      : {r['Entry']}")
-            print(f"Stop Loss  : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
-            print(f"Take Profit: {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
-            print(f"Size       : {r['Position size']}")
-            print(f"TSL bevestigd: {'Ja' if r['TSL bevestigd'] else 'Nee'} | MBL bevestigd: {'Ja' if r['MBL bevestigd'] else 'Nee'} | RSI piek/dal: {r['RSI piek/dal']}")
-            print(validated_tag)
-
-            shark_message_lines.append("")
-            shark_message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}* ({dagen_tag})")
-            shark_message_lines.append(f"Entry : {r['Entry']}")
-            shark_message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
-            shark_message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
-            shark_message_lines.append(f"Size : {r['Position size']}")
-            shark_message_lines.append(f"TSL: {'Ja' if r['TSL bevestigd'] else 'Nee'} | MBL: {'Ja' if r['MBL bevestigd'] else 'Nee'} | RSI: {r['RSI piek/dal']}")
-            shark_message_lines.append(validated_tag)
-
-    else:
-
-        print("Geen nieuwe shark fin-signalen")
-        shark_message_lines.append("Geen nieuwe shark fin-signalen")
-
-    send_telegram_message("\n".join(shark_message_lines))
+        shark_message_lines.append("")
+        shark_message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}* ({dagen_tag})")
+        shark_message_lines.append(f"Entry : {r['Entry']}")
+        shark_message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+        shark_message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+        shark_message_lines.append(f"Size : {r['Position size']}")
+        shark_message_lines.append(f"TSL: {'Ja' if r['TSL bevestigd'] else 'Nee'} | RSI: {r['RSI piek/dal']}")
+        shark_message_lines.append(validated_tag)
 
 else:
-    print()
-    print("🦈 TDI SHARK FIN WATCH - uitgeschakeld (ENABLE_SHARK_FIN_WATCH=False)")
+
+    print("Geen nieuwe shark fin-signalen")
+    shark_message_lines.append("Geen nieuwe shark fin-signalen")
+
+send_telegram_message("\n".join(shark_message_lines))
 
 
 print()
