@@ -385,3 +385,220 @@ def check_latest_shark_fin_signal(df, atr_multiplier, rr):
         "trigger_rsi_level": round(prev_row["TDI_RSI"], 2),
         "data_date": df.index[i],
     }
+
+
+def _cross_signal(df, i):
+    """
+    Bepaalt of er op dag i een RSI/TSL-kruising is (RSI kruist boven
+    TSL = LONG-kruising, TSL kruist boven RSI = SHORT-kruising) - GEEN
+    MBL-eis hier, dat is optie B (breed).
+
+    Geeft (richting, mbl_position_ok) terug:
+    - richting: 'LONG', 'SHORT' of '-'
+    - mbl_position_ok: of TSL/RSI op dat moment OOK aan de juiste kant
+      van de MBL zaten (optie A, als los, filterbaar label)
+    """
+
+    row = df.iloc[i]
+    prev_row = df.iloc[i - 1]
+
+    if (pd.isna(row["TDI_TSL"]) or pd.isna(row["TDI_RSI"])
+            or pd.isna(prev_row["TDI_TSL"]) or pd.isna(prev_row["TDI_RSI"])):
+        return "-", False
+
+    crossed_down = prev_row["TDI_TSL"] >= prev_row["TDI_RSI"] and row["TDI_TSL"] < row["TDI_RSI"]
+    crossed_up = prev_row["TDI_TSL"] <= prev_row["TDI_RSI"] and row["TDI_TSL"] > row["TDI_RSI"]
+
+    mbl_known = not pd.isna(row["TDI_MBL"])
+
+    if crossed_down:
+        # RSI kruist boven TSL -> LONG-kruising
+        mbl_position_ok = mbl_known and row["TDI_TSL"] > row["TDI_MBL"] and row["TDI_RSI"] > row["TDI_MBL"]
+        return "LONG", mbl_position_ok
+
+    if crossed_up:
+        # TSL kruist boven RSI -> SHORT-kruising
+        mbl_position_ok = mbl_known and row["TDI_TSL"] < row["TDI_MBL"] and row["TDI_RSI"] < row["TDI_MBL"]
+        return "SHORT", mbl_position_ok
+
+    return "-", False
+
+
+def simulate_shark_fin_persistent_bias_trades(df, pair, atr_multiplier, rr):
+    """
+    'Aanhoudende bias'-strategie:
+    - Een shark fin zet een richting (bias) neer, en is ZELF al een
+      entry.
+    - Zolang de bias actief is (dus totdat een shark fin in de
+      TEGENOVERGESTELDE richting verschijnt), is ELKE latere MBL-
+      kruising in dezelfde richting OOK een aparte entry.
+    - Eén trade tegelijk (net als de andere strategieën) - een nieuwe
+      entry wordt overgeslagen zolang de vorige nog open staat.
+
+    Elke trade krijgt twee extra, meetbare kenmerken mee: 'price_above_ema200'
+    (of eronder voor SHORT) en 'golden_cross_state' (EMA50 > EMA200,
+    of 'death_cross_state' voor SHORT) - nog geen harde eis, wel te
+    filteren achteraf.
+    """
+
+    trades = []
+    position = None
+    bias = None  # None, 'LONG' of 'SHORT'
+
+    min_bars = 200
+
+    for i in range(min_bars, len(df)):
+
+        row = df.iloc[i]
+        date = df.index[i]
+
+        # --- Eerst: is er een open trade? Check exit ---
+        if position is not None:
+
+            exit_price = None
+            outcome = None
+
+            if position["direction"] == "LONG":
+                if row["Low"] <= position["stop_loss"]:
+                    exit_price = position["stop_loss"]
+                    outcome = "LOSS"
+                elif row["High"] >= position["take_profit"]:
+                    exit_price = position["take_profit"]
+                    outcome = "WIN"
+            else:
+                if row["High"] >= position["stop_loss"]:
+                    exit_price = position["stop_loss"]
+                    outcome = "LOSS"
+                elif row["Low"] <= position["take_profit"]:
+                    exit_price = position["take_profit"]
+                    outcome = "WIN"
+
+            if exit_price is not None:
+                position["exit_date"] = date
+                position["exit_price"] = exit_price
+                position["outcome"] = outcome
+                position["bars_held"] = i - position["entry_bar"]
+                trades.append(position)
+                position = None
+
+            # Bias-update gebeurt ONAFHANKELIJK van open/gesloten
+            # trades - een nieuwe shark fin kan de bias omdraaien
+            # terwijl er nog een trade loopt (die trade loopt gewoon
+            # af op zijn eigen SL/TP)
+            fin_signal = _determine_shark_fin_signal(df, i)
+            if fin_signal in ("LONG", "SHORT"):
+                bias = fin_signal
+
+            continue
+
+        entry_signal = None
+
+        # 1. Nieuwe shark fin? Die is zelf een entry, EN zet/bevestigt de bias.
+        fin_signal = _determine_shark_fin_signal(df, i)
+        mbl_position_ok = False
+
+        if fin_signal in ("LONG", "SHORT"):
+            bias = fin_signal
+            entry_signal = fin_signal
+
+        # 2. Geen nieuwe fin vandaag, maar wel een actieve bias EN een
+        #    RSI/TSL-kruising in dezelfde richting? Ook een entry.
+        #    (optie B: GEEN MBL-eis om mee te tellen - mbl_position_ok
+        #    wordt wel apart getrackt, zodat optie A achteraf te
+        #    filteren is)
+        elif bias is not None:
+            cross_signal, mbl_ok = _cross_signal(df, i)
+            if cross_signal == bias:
+                entry_signal = bias
+                mbl_position_ok = mbl_ok
+
+        if entry_signal in ("LONG", "SHORT"):
+
+            if pd.isna(row["ATR"]) or row["ATR"] <= 0:
+                continue
+
+            stop_loss = calculate_stop_loss(row["Close"], row["ATR"], atr_multiplier, entry_signal)
+            take_profit = calculate_take_profit(row["Close"], stop_loss, rr, entry_signal)
+
+            price_above_ema200 = False
+            golden_cross_state = False
+            if not pd.isna(row["EMA50"]) and not pd.isna(row["EMA200"]):
+                if entry_signal == "LONG":
+                    price_above_ema200 = row["Close"] > row["EMA200"]
+                    golden_cross_state = row["EMA50"] > row["EMA200"]
+                else:
+                    price_above_ema200 = row["Close"] < row["EMA200"]  # 'onder' voor SHORT
+                    golden_cross_state = row["EMA50"] < row["EMA200"]  # 'death cross'-structuur
+
+            position = {
+                "pair": pair,
+                "direction": entry_signal,
+                "entry_date": date,
+                "entry_price": row["Close"],
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "entry_bar": i,
+                "entry_type": "shark_fin" if fin_signal == entry_signal else "cross",
+                "mbl_position_ok": mbl_position_ok,
+                "price_above_ema200": price_above_ema200,
+                "golden_cross_state": golden_cross_state,
+            }
+
+    if position is not None:
+        position["exit_date"] = None
+        position["exit_price"] = None
+        position["outcome"] = "OPEN"
+        position["bars_held"] = None
+        trades.append(position)
+
+    return trades
+
+
+def check_recent_persistent_bias_signals(df, atr_multiplier, rr, lookback_days=5):
+    """
+    Live-check voor de aanhoudende-bias-strategie (V1: LONG-only,
+    shark fin + cross-entries samen - crypto-uitsluiting gebeurt al
+    op het niveau van SCAN_PAIRS in main.py, niet hier).
+
+    Omdat de bias een status-machine is die de hele geschiedenis kent,
+    draait dit de VOLLEDIGE simulatie opnieuw op de meegegeven data,
+    en pikt daar de entries uit die in de laatste 'lookback_days'
+    vielen - net als bij de eerdere shark-fin-lookback, om geen
+    signaal te missen als je een dag niet had gecheckt.
+
+    Geeft een lijst terug (kan leeg zijn).
+    """
+
+    trades = simulate_shark_fin_persistent_bias_trades(df, "LIVE", atr_multiplier, rr)
+
+    if not trades:
+        return []
+
+    last_index = len(df) - 1
+    date_to_index = {d: i for i, d in enumerate(df.index)}
+
+    results = []
+
+    for t in trades:
+
+        if t["direction"] != "LONG":
+            continue
+
+        entry_idx = date_to_index.get(t["entry_date"])
+        if entry_idx is None:
+            continue
+
+        days_ago = last_index - entry_idx
+
+        if 0 <= days_ago < lookback_days:
+            results.append({
+                "direction": t["direction"],
+                "entry_price": t["entry_price"],
+                "stop_loss": t["stop_loss"],
+                "take_profit": t["take_profit"],
+                "entry_type": t["entry_type"],
+                "data_date": t["entry_date"],
+                "days_ago": days_ago,
+            })
+
+    return results

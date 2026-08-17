@@ -1,14 +1,5 @@
-Pair,Asset Class,Direction,Entry,Stop Loss,Take Profit,SL afstand,TP afstand,SL pips (indicatief),TP pips (indicatief),TSL bevestigd,RSI piek/dal,Gevalideerd (LONG+TSL+RSI<=30),Dagen geleden,Data datum,Position size
-USDMXN,forex,LONG,17.015,16.81122,17.42256,0.20378,0.40756,2037.8,4075.6,False,26.21,False,0,2026-08-16,-
-USDZAR,forex,LONG,16.1855,15.798,16.9605,0.3875,0.77501,3875.0,7750.1,False,37.51,False,4,2026-08-11,-
-DIS,stocks,SHORT,103.18,107.94689,93.64621,4.76689,9.53379,,,False,67.71,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
-APA,stocks,SHORT,40.62,43.65708,34.54584,3.03708,6.07416,,,False,69.82,False,3,2026-08-11,$50.0 risico (check contractgrootte bij broker)
-WMT,stocks,SHORT,115.27,120.2762,105.25759,5.0062,10.0124,,,False,59.4,False,0,2026-08-14,$50.0 risico (check contractgrootte bij broker)
-NFLX,stocks,SHORT,78.16,82.82453,68.83096,4.66452,9.32905,,,False,63.24,False,0,2026-08-14,$50.0 risico (check contractgrootte bij broker)
-EBAY,stocks,LONG,104.58,97.0615,119.61701,7.5185,15.03701,,,False,35.04,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
-GOLD,metals,SHORT,4363.6001,4513.03341,4064.73347,149.43331,298.86662,,,False,69.84,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
-SILVER,metals,SHORT,64.873,68.13992,58.33917,3.26691,6.53383,,,False,64.62,False,1,2026-08-13,$50.0 risico (check contractgrootte bij broker)
-PLATINUM,metals,SHORT,1744.5,1805.50228,1622.49544,61.00228,122.00456,,,False,61.63,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
-FRANCE40,indices,SHORT,8726.03027,8899.44672,8379.19738,173.41645,346.83289,,,False,70.68,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
-AUSTRALIA200,indices,SHORT,9232.59961,9398.81554,8900.16776,166.21593,332.43185,,,False,75.71,False,4,2026-08-10,$50.0 risico (check contractgrootte bij broker)
-SUGAR,commodities,SHORT,16.42,17.27724,14.70551,0.85724,1.71449,,,False,81.43,False,2,2026-08-12,$50.0 risico (check contractgrootte bij broker)
+Pair,Asset Class,Direction,Entry,Stop Loss,Take Profit,SL afstand,TP afstand,SL pips (indicatief),TP pips (indicatief),Entry type,Dagen geleden,Data datum,Position size
+EURSEK,forex,LONG,10.98631,10.86827,11.22239,0.11804,0.23608,1180.4,2360.8,cross,3,2026-08-12,-
+RACE,stocks,LONG,412.29001,394.21421,448.4416,18.07579,36.15159,,,cross,2,2026-08-13,$50.0 risico (check contractgrootte bij broker)
+EUROPE50,indices,LONG,6545.47021,6415.59567,6805.21931,129.87455,259.7491,,,cross,2,2026-08-13,$50.0 risico (check contractgrootte bij broker)
+CORN,commodities,LONG,457.0,436.61642,497.76716,20.38358,40.76716,,,cross,3,2026-08-12,$50.0 risico (check contractgrootte bij broker)
