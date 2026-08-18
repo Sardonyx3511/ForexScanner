@@ -11,15 +11,15 @@ from utils.breakout_strategy import check_latest_breakout_signal, prepare_breako
 from utils.pullback_strategy import check_latest_pullback_signal
 from utils.donchian_strategy import check_latest_donchian_signal
 from utils.donchian_indicator import add_donchian_channels
-from utils.tdi_shark_fin_strategy import check_recent_persistent_bias_signals, add_tdi_indicators, add_long_term_emas
+from utils.tdi_shark_fin_strategy import check_recent_persistent_bias_signals, check_open_persistent_bias_position, add_tdi_indicators, add_long_term_emas
 
 
 print("\033c", end="")
 
 print("===================================")
-print("      FOREX SCANNER v7.5")
-print("      TDI AANHOUDENDE BIAS (focus-modus)")
-print("      Breakout/Pullback/Donchian tijdelijk uit")
+print("      FOREX SCANNER v8.0")
+print("      ALLE 4 STRATEGIEËN ACTIEF")
+print("      Breakout + Pullback + Donchian + TDI Bias")
 print("===================================")
 
 
@@ -37,16 +37,19 @@ SHARK_FIN_LOOKBACK_DAYS = 5
 # blijft intact, gewoon op False zetten om ze te laten rusten, en
 # terugzetten op True om ze weer te activeren.
 # ============================================
-ENABLE_BREAKOUT_WATCH = False
-ENABLE_PULLBACK_WATCH = False
-ENABLE_DONCHIAN_WATCH = False
+ENABLE_BREAKOUT_WATCH = True
+ENABLE_PULLBACK_WATCH = True
+ENABLE_DONCHIAN_WATCH = True
 ENABLE_SHARK_FIN_WATCH = True
 
-# Crypto tijdelijk uitgesloten van de scan - gaf te veel signalen om
-# overzichtelijk te monitoren. Op False zetten om crypto weer mee te nemen.
-EXCLUDE_CRYPTO = True
+# Crypto-uitsluiting geldt ALLEEN voor TDI (bewezen dat crypto die
+# strategie specifiek schaadt) - breakout/pullback/Donchian zijn
+# oorspronkelijk gevalideerd MET crypto, dus die blijven crypto gewoon
+# meenemen. Vandaar geen globale SCAN_PAIRS-filter meer, maar een
+# check specifiek in de TDI-sectie van analyse().
+TDI_EXCLUDE_CRYPTO = True
 
-SCAN_PAIRS = [p for p in ALL_PAIRS if get_asset_class(p) != "crypto"] if EXCLUDE_CRYPTO else ALL_PAIRS
+SCAN_PAIRS = ALL_PAIRS
 
 
 # ============================================
@@ -194,7 +197,7 @@ def analyse(pair):
 
 
         if df.empty or len(df) < 150:
-            return None, None, None, None
+            return None, None, None, None, None
 
 
         asset_class = get_asset_class(pair)
@@ -323,20 +326,25 @@ def analyse(pair):
         # =====================================
         # TDI AANHOUDENDE BIAS (V1) - GEVALIDEERD
         # LONG-only, shark fin + cross-entries samen, geen MBL-eis,
-        # geen EMA-filter. Crypto is al uitgesloten via SCAN_PAIRS
-        # (EXCLUDE_CRYPTO-schakelaar). Out-of-sample gevalideerd over
-        # twee periodes (13% terugval, opmerkelijk stabiel).
+        # geen EMA-filter. Crypto wordt HIER specifiek uitgesloten
+        # (TDI_EXCLUDE_CRYPTO) - bewezen dat crypto deze strategie
+        # schaadt, in tegenstelling tot de andere drie. Out-of-sample
+        # gevalideerd over twee periodes (13% terugval, stabiel).
         #
         # Dit is een status-machine die de hele geschiedenis kent, dus
         # de check draait de volledige simulatie opnieuw en pikt de
         # laatste SHARK_FIN_LOOKBACK_DAYS dagen eruit.
         # =====================================
-        shark_signals = check_recent_persistent_bias_signals(
-            df_prepared,
-            atr_multiplier=ATR_MULTIPLIER,
-            rr=RR,
-            lookback_days=SHARK_FIN_LOOKBACK_DAYS,
-        )
+        shark_signals = []
+
+        if ENABLE_SHARK_FIN_WATCH and not (TDI_EXCLUDE_CRYPTO and asset_class == "crypto"):
+
+            shark_signals = check_recent_persistent_bias_signals(
+                df_prepared,
+                atr_multiplier=ATR_MULTIPLIER,
+                rr=RR,
+                lookback_days=SHARK_FIN_LOOKBACK_DAYS,
+            )
 
         shark_results_for_pair = []
 
@@ -366,12 +374,38 @@ def analyse(pair):
                 "Position size": sf_position_size,
             })
 
-        return breakout_result, pullback_result, donchian_result, shark_results_for_pair
+        # Open-positie-diagnostiek: laat zien WAAROM er soms geen
+        # nieuw signaal verschijnt (de vorige trade uit dezelfde bias
+        # staat nog open, dus geen nieuwe entry totdat die sluit)
+        open_position_result = None
+
+        if ENABLE_SHARK_FIN_WATCH and not (TDI_EXCLUDE_CRYPTO and asset_class == "crypto"):
+
+            open_pos = check_open_persistent_bias_position(
+                df_prepared,
+                atr_multiplier=ATR_MULTIPLIER,
+                rr=RR,
+            )
+
+            if open_pos is not None:
+                open_position_result = {
+                    "Pair": clean_name,
+                    "Asset Class": asset_class,
+                    "Direction": open_pos["direction"],
+                    "Entry": round(open_pos["entry_price"], 5),
+                    "Stop Loss": round(open_pos["stop_loss"], 5),
+                    "Take Profit": round(open_pos["take_profit"], 5),
+                    "Entry type": open_pos["entry_type"],
+                    "Entry datum": str(open_pos["entry_date"])[:10],
+                    "Dagen open": open_pos["days_open"],
+                }
+
+        return breakout_result, pullback_result, donchian_result, shark_results_for_pair, open_position_result
 
 
     except Exception:
 
-        return None, None, None, None
+        return None, None, None, None, None
 
 
 
@@ -380,9 +414,10 @@ breakout_results=[]
 pullback_results=[]
 donchian_results=[]
 shark_results=[]
+open_positions=[]
 
 
-crypto_note = " (crypto uitgesloten)" if EXCLUDE_CRYPTO else ""
+crypto_note = " (crypto alleen uitgesloten voor TDI)" if TDI_EXCLUDE_CRYPTO else ""
 print(f"Scannen van {len(SCAN_PAIRS)} markten{crypto_note}...")
 
 for pair in SCAN_PAIRS:
@@ -390,7 +425,7 @@ for pair in SCAN_PAIRS:
     if DEBUG:
         print("Scan:", pair)
 
-    bo, pb, dc, sf = analyse(pair)
+    bo, pb, dc, sf, op = analyse(pair)
 
     if bo:
         breakout_results.append(bo)
@@ -403,6 +438,9 @@ for pair in SCAN_PAIRS:
 
     if sf:
         shark_results.extend(sf)
+
+    if op:
+        open_positions.append(op)
 
 
 
@@ -628,6 +666,20 @@ if ENABLE_SHARK_FIN_WATCH:
 
         print("Geen nieuwe signalen")
         shark_message_lines.append("Geen nieuwe signalen")
+
+    # Open-posities-overzicht - laat zien waarom er soms geen nieuw
+    # signaal verschijnt (vorige trade uit dezelfde bias loopt nog)
+    if open_positions:
+
+        print()
+        print(f"--- {len(open_positions)} lopende positie(s) uit eerdere bias (nog niet gesloten) ---")
+        shark_message_lines.append("")
+        shark_message_lines.append(f"_{len(open_positions)} lopende positie(s), nog niet gesloten:_")
+
+        for op in open_positions:
+            asset_tag = op["Asset Class"].upper()
+            print(f"[{asset_tag}] {op['Pair']} {op['Direction']} | Entry: {op['Entry']} ({op['Entry datum']}) | {op['Dagen open']} dagen open | type={op['Entry type']}")
+            shark_message_lines.append(f"[{asset_tag}] {op['Pair']} {op['Direction']} - entry {op['Entry']} ({op['Entry datum']}, {op['Dagen open']}d open)")
 
     send_telegram_message("\n".join(shark_message_lines))
 

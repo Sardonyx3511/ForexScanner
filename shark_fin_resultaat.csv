@@ -1,5 +1,6 @@
 Pair,Asset Class,Direction,Entry,Stop Loss,Take Profit,SL afstand,TP afstand,SL pips (indicatief),TP pips (indicatief),Entry type,Dagen geleden,Data datum,Position size
 EURSEK,forex,LONG,10.98631,10.86827,11.22239,0.11804,0.23608,1180.4,2360.8,cross,3,2026-08-12,-
-RACE,stocks,LONG,412.29001,394.21421,448.4416,18.07579,36.15159,,,cross,2,2026-08-13,$50.0 risico (check contractgrootte bij broker)
-EUROPE50,indices,LONG,6545.47021,6415.59567,6805.21931,129.87455,259.7491,,,cross,2,2026-08-13,$50.0 risico (check contractgrootte bij broker)
-CORN,commodities,LONG,457.0,436.61642,497.76716,20.38358,40.76716,,,cross,3,2026-08-12,$50.0 risico (check contractgrootte bij broker)
+USDCAD,forex,LONG,1.3898,1.37775,1.4139,0.01205,0.0241,120.5,241.0,cross,0,2026-08-18,"0.04 lots (indicatief, check pipwaarde bij broker)"
+RACE,stocks,LONG,414.85001,397.69113,449.16777,17.15888,34.31776,,,cross,2,2026-08-14,$50.0 risico (check contractgrootte bij broker)
+EUROPE50,indices,LONG,6545.47021,6415.25555,6805.89955,130.21467,260.42933,,,cross,3,2026-08-13,$50.0 risico (check contractgrootte bij broker)
+CORN,commodities,LONG,457.0,436.61642,497.76716,20.38358,40.76716,,,cross,4,2026-08-12,$50.0 risico (check contractgrootte bij broker)

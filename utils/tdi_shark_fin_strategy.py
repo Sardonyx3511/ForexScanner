@@ -602,3 +602,45 @@ def check_recent_persistent_bias_signals(df, atr_multiplier, rr, lookback_days=5
             })
 
     return results
+
+
+def check_open_persistent_bias_position(df, atr_multiplier, rr):
+    """
+    Checkt of er een LOPENDE (nog niet gesloten) positie is vanuit de
+    aanhoudende-bias-strategie - los van check_recent_persistent_bias_signals,
+    die alleen NIEUWE entries uit de laatste dagen toont. Dit maakt
+    zichtbaar WAAROM er soms geen nieuw signaal verschijnt: als de
+    vorige trade nog open staat, wordt er bewust geen nieuwe entry
+    genomen (één trade tegelijk), ook al zou een latere kruising er
+    normaal wel aan voldoen.
+
+    Geeft None terug als er geen open LONG-positie is.
+    """
+
+    trades = simulate_shark_fin_persistent_bias_trades(df, "LIVE", atr_multiplier, rr)
+
+    if not trades:
+        return None
+
+    last_trade = trades[-1]
+
+    if last_trade["outcome"] != "OPEN":
+        return None
+
+    if last_trade["direction"] != "LONG":
+        return None
+
+    last_index = len(df) - 1
+    date_to_index = {d: i for i, d in enumerate(df.index)}
+    entry_idx = date_to_index.get(last_trade["entry_date"])
+    days_open = last_index - entry_idx if entry_idx is not None else None
+
+    return {
+        "direction": last_trade["direction"],
+        "entry_price": last_trade["entry_price"],
+        "stop_loss": last_trade["stop_loss"],
+        "take_profit": last_trade["take_profit"],
+        "entry_type": last_trade["entry_type"],
+        "entry_date": last_trade["entry_date"],
+        "days_open": days_open,
+    }
