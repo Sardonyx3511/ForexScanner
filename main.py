@@ -25,57 +25,33 @@ print("===================================")
 
 scan_date = datetime.now().strftime("%d-%m-%Y %H:%M")
 
-# Hoeveel handelsdagen terug de TDI Shark Fin-check kijkt (5 = ongeveer
-# een week) - dit signaal is zeldzaam, dus we willen niet alleen
-# vandaag checken.
 SHARK_FIN_LOOKBACK_DAYS = 5
 
-# ============================================
-# STRATEGIE AAN/UIT-SCHAKELAARS
-# Tijdelijk uitgezet op verzoek - alleen TDI Shark Fin actief, zodat
-# de focus volledig op die strategie ligt. De code van de andere drie
-# blijft intact, gewoon op False zetten om ze te laten rusten, en
-# terugzetten op True om ze weer te activeren.
-# ============================================
 ENABLE_BREAKOUT_WATCH = True
 ENABLE_PULLBACK_WATCH = True
 ENABLE_DONCHIAN_WATCH = True
 ENABLE_SHARK_FIN_WATCH = True
 
-# Crypto-uitsluiting geldt ALLEEN voor TDI (bewezen dat crypto die
-# strategie specifiek schaadt) - breakout/pullback/Donchian zijn
-# oorspronkelijk gevalideerd MET crypto, dus die blijven crypto gewoon
-# meenemen. Vandaar geen globale SCAN_PAIRS-filter meer, maar een
-# check specifiek in de TDI-sectie van analyse().
 TDI_EXCLUDE_CRYPTO = True
 
 SCAN_PAIRS = ALL_PAIRS
 
 
-# ============================================
-# TELEGRAM CONFIG
-# ============================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
-TELEGRAM_MAX_LENGTH = 4000  # Telegram's limiet is 4096, met wat marge
+TELEGRAM_MAX_LENGTH = 4000
 
 
 def split_message(text, max_length=TELEGRAM_MAX_LENGTH):
-    """
-    Splitst een lang bericht in meerdere delen die elk onder Telegram's
-    tekenlimiet blijven. Splitst op regel-grenzen (nooit midden in een
-    regel), zodat de opmaak (bijv. *vetgedrukt*) niet kapotgaat.
-    """
-
     lines = text.split("\n")
     chunks = []
     current_chunk = []
     current_length = 0
 
     for line in lines:
-        line_length = len(line) + 1  # +1 voor de newline
+        line_length = len(line) + 1
 
         if current_length + line_length > max_length and current_chunk:
             chunks.append("\n".join(current_chunk))
@@ -92,12 +68,6 @@ def split_message(text, max_length=TELEGRAM_MAX_LENGTH):
 
 
 def send_telegram_message(text):
-    """
-    Stuurt een bericht naar Telegram. Splitst automatisch op in
-    meerdere berichten als de tekst Telegram's limiet (4096 tekens)
-    overschrijdt - anders zou het HELE bericht geweigerd worden,
-    inclusief het deel dat wel binnen de limiet paste.
-    """
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️  TELEGRAM_TOKEN of TELEGRAM_CHAT_ID ontbreekt, bericht wordt niet verstuurd.")
@@ -112,7 +82,6 @@ def send_telegram_message(text):
 
     for idx, chunk in enumerate(chunks):
 
-        # Voeg een deel-indicator toe als het bericht is opgesplitst
         if len(chunks) > 1:
             chunk = f"*(deel {idx + 1}/{len(chunks)})*\n\n{chunk}"
 
@@ -137,11 +106,6 @@ def send_telegram_message(text):
 
 
 def determine_position_size(asset_class, entry_price, stop_loss, pair):
-    """
-    Positiegrootte per assetklasse - forex krijgt een lot-getal, crypto
-    een aantal eenheden, de rest (stocks/metals/indices/commodities)
-    een risicobedrag zonder specifiek aantal.
-    """
 
     if entry_price is None or stop_loss is None:
         return "-"
@@ -164,7 +128,6 @@ def determine_position_size(asset_class, entry_price, stop_loss, pair):
 
 
 def calc_pips(asset_class, pair, distance):
-    """Indicatieve pip-omrekening voor forex, None voor andere assetklasses."""
 
     if asset_class != "forex" or distance is None:
         return None
@@ -175,15 +138,6 @@ def calc_pips(asset_class, pair, distance):
 
 
 def analyse(pair):
-    """
-    Download data één keer per paar, en checkt 'm tegen BEIDE
-    gevalideerde strategieën: breakout/volume en pullback (SHORT+
-    divergentie). prepare_breakout_data levert alle indicatoren die
-    beide strategieën nodig hebben (superset), dus geen dubbele
-    download of voorbereiding nodig.
-
-    Geeft (breakout_result, pullback_result) terug - beide kunnen None zijn.
-    """
 
     try:
 
@@ -208,9 +162,6 @@ def analyse(pair):
         df_prepared = add_tdi_indicators(df_prepared, rsi_period=13, band_period=34, band_dev=2)
         df_prepared = add_long_term_emas(df_prepared, fast_span=50, slow_span=200)
 
-        # =====================================
-        # BREAKOUT / VOLUME-STRATEGIE
-        # =====================================
         breakout_result = None
 
         if ENABLE_BREAKOUT_WATCH:
@@ -249,9 +200,6 @@ def analyse(pair):
                     "Position size": bo_position_size,
                 }
 
-        # =====================================
-        # PULLBACK-STRATEGIE (alleen SHORT + divergentie)
-        # =====================================
         pullback_result = None
 
         if ENABLE_PULLBACK_WATCH:
@@ -286,9 +234,6 @@ def analyse(pair):
                     "Position size": pb_position_size,
                 }
 
-        # =====================================
-        # DONCHIAN-STRATEGIE (alleen LONG, gevalideerde combinatie)
-        # =====================================
         donchian_result = None
 
         if ENABLE_DONCHIAN_WATCH:
@@ -323,18 +268,6 @@ def analyse(pair):
                     "Position size": dc_position_size,
                 }
 
-        # =====================================
-        # TDI AANHOUDENDE BIAS (V1) - GEVALIDEERD
-        # LONG-only, shark fin + cross-entries samen, geen MBL-eis,
-        # geen EMA-filter. Crypto wordt HIER specifiek uitgesloten
-        # (TDI_EXCLUDE_CRYPTO) - bewezen dat crypto deze strategie
-        # schaadt, in tegenstelling tot de andere drie. Out-of-sample
-        # gevalideerd over twee periodes (13% terugval, stabiel).
-        #
-        # Dit is een status-machine die de hele geschiedenis kent, dus
-        # de check draait de volledige simulatie opnieuw en pikt de
-        # laatste SHARK_FIN_LOOKBACK_DAYS dagen eruit.
-        # =====================================
         shark_signals = []
 
         if ENABLE_SHARK_FIN_WATCH and not (TDI_EXCLUDE_CRYPTO and asset_class == "crypto"):
@@ -374,9 +307,6 @@ def analyse(pair):
                 "Position size": sf_position_size,
             })
 
-        # Open-positie-diagnostiek: laat zien WAAROM er soms geen
-        # nieuw signaal verschijnt (de vorige trade uit dezelfde bias
-        # staat nog open, dus geen nieuwe entry totdat die sluit)
         open_position_result = None
 
         if ENABLE_SHARK_FIN_WATCH and not (TDI_EXCLUDE_CRYPTO and asset_class == "crypto"):
@@ -577,7 +507,75 @@ else:
 
 
 # =====================================
-# 3. DONCHIAN WATCH - eigen bericht
+# 3. TDI AANHOUDENDE BIAS WATCH - eigen bericht (nu VOOR Donchian)
+# =====================================
+
+if ENABLE_SHARK_FIN_WATCH:
+
+    print()
+    print("🦈 TDI AANHOUDENDE BIAS WATCH (LONG-only) - GEVALIDEERD")
+    print("-----------------------------------")
+
+    shark_message_lines = [header_line, "", "🦈 *TDI AANHOUDENDE BIAS WATCH (LONG-only) - GEVALIDEERD*"]
+
+    if shark_results:
+
+        for r in shark_results:
+
+            asset_tag = r["Asset Class"].upper()
+            pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
+            pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
+            dagen_tag = "vandaag" if r["Dagen geleden"] == 0 else f"{r['Dagen geleden']} dagen geleden"
+            type_tag = "🦈 Shark fin (nieuwe bias)" if r["Entry type"] == "shark_fin" else "✖️ MBL-kruising (binnen bestaande bias)"
+
+            print()
+            print(f"[{asset_tag}] {r['Pair']} {r['Direction']} ({dagen_tag})")
+            print(f"Entry      : {r['Entry']}")
+            print(f"Stop Loss  : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+            print(f"Take Profit: {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+            print(f"Size       : {r['Position size']}")
+            print(type_tag)
+
+            shark_message_lines.append("")
+            shark_message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}* ({dagen_tag})")
+            shark_message_lines.append(f"Entry : {r['Entry']}")
+            shark_message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
+            shark_message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
+            shark_message_lines.append(f"Size : {r['Position size']}")
+            shark_message_lines.append(type_tag)
+
+    else:
+
+        print("Geen nieuwe signalen")
+        shark_message_lines.append("Geen nieuwe signalen")
+
+    # Open-posities-overzicht, gesorteerd van NIEUWSTE naar OUDSTE
+    # (dus de langst-lopende posities staan onderaan)
+    if open_positions:
+
+        open_positions_sorted = sorted(
+            open_positions, key=lambda op: op["Entry datum"], reverse=True
+        )
+
+        print()
+        print(f"--- {len(open_positions_sorted)} lopende positie(s) uit eerdere bias (nog niet gesloten, nieuwste eerst) ---")
+        shark_message_lines.append("")
+        shark_message_lines.append(f"_{len(open_positions_sorted)} lopende positie(s), nog niet gesloten (nieuwste eerst):_")
+
+        for op in open_positions_sorted:
+            asset_tag = op["Asset Class"].upper()
+            print(f"[{asset_tag}] {op['Pair']} {op['Direction']} | Entry: {op['Entry']} ({op['Entry datum']}) | {op['Dagen open']} dagen open | type={op['Entry type']}")
+            shark_message_lines.append(f"[{asset_tag}] {op['Pair']} {op['Direction']} - entry {op['Entry']} ({op['Entry datum']}, {op['Dagen open']}d open)")
+
+    send_telegram_message("\n".join(shark_message_lines))
+
+else:
+    print()
+    print("🦈 TDI AANHOUDENDE BIAS WATCH - uitgeschakeld (ENABLE_SHARK_FIN_WATCH=False)")
+
+
+# =====================================
+# 4. DONCHIAN WATCH - eigen bericht (nu NA TDI)
 # =====================================
 
 if ENABLE_DONCHIAN_WATCH:
@@ -621,71 +619,6 @@ if ENABLE_DONCHIAN_WATCH:
 else:
     print()
     print("📈 DONCHIAN WATCH - uitgeschakeld (ENABLE_DONCHIAN_WATCH=False)")
-
-
-# =====================================
-# 4. TDI AANHOUDENDE BIAS WATCH - eigen bericht (GEVALIDEERD, vervangt
-# de oude ongefilterde Shark Fin Watch)
-# =====================================
-
-if ENABLE_SHARK_FIN_WATCH:
-
-    print()
-    print("🦈 TDI AANHOUDENDE BIAS WATCH (LONG-only) - GEVALIDEERD")
-    print("-----------------------------------")
-
-    shark_message_lines = [header_line, "", "🦈 *TDI AANHOUDENDE BIAS WATCH (LONG-only) - GEVALIDEERD*"]
-
-    if shark_results:
-
-        for r in shark_results:
-
-            asset_tag = r["Asset Class"].upper()
-            pip_info = f" ({r['SL pips (indicatief)']} pips)" if r['SL pips (indicatief)'] is not None else ""
-            pip_info_tp = f" ({r['TP pips (indicatief)']} pips)" if r['TP pips (indicatief)'] is not None else ""
-            dagen_tag = "vandaag" if r["Dagen geleden"] == 0 else f"{r['Dagen geleden']} dagen geleden"
-            type_tag = "🦈 Shark fin (nieuwe bias)" if r["Entry type"] == "shark_fin" else "✖️ MBL-kruising (binnen bestaande bias)"
-
-            print()
-            print(f"[{asset_tag}] {r['Pair']} {r['Direction']} ({dagen_tag})")
-            print(f"Entry      : {r['Entry']}")
-            print(f"Stop Loss  : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
-            print(f"Take Profit: {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
-            print(f"Size       : {r['Position size']}")
-            print(type_tag)
-
-            shark_message_lines.append("")
-            shark_message_lines.append(f"[{asset_tag}] *{r['Pair']} {r['Direction']}* ({dagen_tag})")
-            shark_message_lines.append(f"Entry : {r['Entry']}")
-            shark_message_lines.append(f"SL : {r['Stop Loss']} (afstand: {r['SL afstand']}{pip_info})")
-            shark_message_lines.append(f"TP : {r['Take Profit']} (afstand: {r['TP afstand']}{pip_info_tp})")
-            shark_message_lines.append(f"Size : {r['Position size']}")
-            shark_message_lines.append(type_tag)
-
-    else:
-
-        print("Geen nieuwe signalen")
-        shark_message_lines.append("Geen nieuwe signalen")
-
-    # Open-posities-overzicht - laat zien waarom er soms geen nieuw
-    # signaal verschijnt (vorige trade uit dezelfde bias loopt nog)
-    if open_positions:
-
-        print()
-        print(f"--- {len(open_positions)} lopende positie(s) uit eerdere bias (nog niet gesloten) ---")
-        shark_message_lines.append("")
-        shark_message_lines.append(f"_{len(open_positions)} lopende positie(s), nog niet gesloten:_")
-
-        for op in open_positions:
-            asset_tag = op["Asset Class"].upper()
-            print(f"[{asset_tag}] {op['Pair']} {op['Direction']} | Entry: {op['Entry']} ({op['Entry datum']}) | {op['Dagen open']} dagen open | type={op['Entry type']}")
-            shark_message_lines.append(f"[{asset_tag}] {op['Pair']} {op['Direction']} - entry {op['Entry']} ({op['Entry datum']}, {op['Dagen open']}d open)")
-
-    send_telegram_message("\n".join(shark_message_lines))
-
-else:
-    print()
-    print("🦈 TDI AANHOUDENDE BIAS WATCH - uitgeschakeld (ENABLE_SHARK_FIN_WATCH=False)")
 
 
 print()
