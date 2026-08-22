@@ -5,6 +5,7 @@ from utils.indicators import add_bollinger_bands
 import pandas as pd
 import requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from config.settings import *
 from utils.risk import calculate_lot_size, calculate_crypto_units
 from utils.breakout_strategy import check_latest_breakout_signal, prepare_breakout_data
@@ -23,7 +24,7 @@ print("      Breakout + Pullback + Donchian + TDI Bias")
 print("===================================")
 
 
-scan_date = datetime.now().strftime("%d-%m-%Y %H:%M")
+scan_date = datetime.now(ZoneInfo("Europe/Amsterdam")).strftime("%d-%m-%Y %H:%M")
 
 SHARK_FIN_LOOKBACK_DAYS = 5
 

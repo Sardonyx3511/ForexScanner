@@ -6,11 +6,17 @@ Kernidee: puur objectief, geen trendlijnen of subjectieve interpretatie.
 Koop zodra de slotkoers het hoogste punt van de afgelopen N dagen
 doorbreekt; verkoop bij het laagste punt.
 
-Uit eerste backtest bleek de PURE, ongefilterde versie zonder crypto
-verlieslatend en LONG-gedomineerd - dit bestand voegt drie meetbare
-kenmerken per trade toe (EMA-richting, volumebevestiging, uitbraak-
-sterkte in ATR's) zodat objectief getest kan worden welke combinatie
-daadwerkelijk helpt, i.p.v. filters blind toe te voegen.
+GEVALIDEERDE FILTERS (uit uitgebreid backtesten, 213 markten):
+- Alleen LONG (SHORT bleek structureel verlieslatend, ongeacht filter)
+- EMA21-uitlijning: EMA21 moet in dezelfde richting lopen als de trade
+- Uitbraaksterkte >= 0.75 ATR: de slotkoers moet minstens 0.75x de ATR
+  voorbij het kanaal liggen, niet slechts een marginale overschrijding.
+  Dit bleek het omslagpunt: winrate en gemiddeld resultaat per trade
+  bereiken hier hun piek (39,7% winrate, 0,19R/trade), en een hogere
+  drempel (1.0+ ATR) verzwakt de kwaliteit juist weer en verliest de
+  brede spreiding over assetklasses. Vermindert het aantal signalen
+  met ~75% t.o.v. de ongefilterde versie, met een duidelijk betere
+  kwaliteit (drawdown van 63R naar 18R).
 
 Exit-logica identiek aan breakout/pullback (ATR-based SL, RR-based TP).
 """
@@ -21,6 +27,10 @@ from utils.risk import calculate_stop_loss, calculate_take_profit
 from utils.donchian_indicator import add_donchian_channels
 from utils.backtest import prepare_backtest_data
 from utils.breakout_strategy import has_reliable_volume
+
+
+# Vaste, gevalideerde drempel voor de uitbraaksterkte
+MIN_BREAKOUT_STRENGTH_ATR = 0.75
 
 
 def prepare_donchian_data(df, rsi_window=14, ema_span=21, channel_window=20):
@@ -55,17 +65,47 @@ def _determine_donchian_signal(df, i):
     return "-"
 
 
-def simulate_donchian_trades(df, pair, atr_multiplier, rr,
-                              ema_slope_lookback=5, volume_multiplier=1.5):
+def _compute_features(df, i, entry):
     """
-    Loopt dag voor dag door de historische data en simuleert trades
-    volgens de Donchian-breakout-strategie. Elke trade krijgt drie
-    filterbare kenmerken mee: ema_aligned, volume_confirmed,
-    breakout_strength_atr - voor achteraf objectief testen welke
-    combinatie helpt.
+    Berekent de meetbare kenmerken (EMA-uitlijning, volumebevestiging,
+    uitbraaksterkte) voor een gegeven signaal op dag i.
     """
 
+    row = df.iloc[i]
+
+    ema_aligned = False
+    if i >= 5 and not pd.isna(row["EMA21"]):
+        ema_prev = df["EMA21"].iloc[i - 5]
+        ema_now = row["EMA21"]
+        if entry == "LONG":
+            ema_aligned = ema_now > ema_prev
+        else:
+            ema_aligned = ema_now < ema_prev
+
+    volume_confirmed = False
     use_volume = has_reliable_volume(df)
+    if use_volume and "Volume" in df.columns:
+        avg_volume = df["Volume"].iloc[i - 20: i].mean()
+        if not pd.isna(avg_volume) and avg_volume > 0:
+            volume_confirmed = row["Volume"] > 1.5 * avg_volume
+
+    if entry == "LONG":
+        breakout_strength_atr = round((row["Close"] - row["Donchian_upper"]) / row["ATR"], 3)
+    else:
+        breakout_strength_atr = round((row["Donchian_lower"] - row["Close"]) / row["ATR"], 3)
+
+    return ema_aligned, volume_confirmed, breakout_strength_atr
+
+
+def simulate_donchian_trades(df, pair, atr_multiplier, rr):
+    """
+    Loopt dag voor dag door de historische data en simuleert trades
+    volgens de Donchian-breakout-strategie. Elke trade krijgt de
+    filterbare kenmerken mee (voor eventueel toekomstig hertesten),
+    maar simuleert zelf nog ONGEFILTERD (LONG+SHORT, alle sterktes) -
+    het live-gebruik in check_latest_donchian_signal past wél de
+    gevalideerde filters toe. Dit scheiden houdt backtesten flexibel.
+    """
 
     trades = []
     position = None
@@ -117,29 +157,7 @@ def simulate_donchian_trades(df, pair, atr_multiplier, rr,
             stop_loss = calculate_stop_loss(row["Close"], row["ATR"], atr_multiplier, entry)
             take_profit = calculate_take_profit(row["Close"], stop_loss, rr, entry)
 
-            # Kenmerk 1: EMA21-richting sluit aan bij de breakout-richting?
-            if i >= ema_slope_lookback and not pd.isna(row["EMA21"]):
-                ema_prev = df["EMA21"].iloc[i - ema_slope_lookback]
-                ema_now = row["EMA21"]
-                if entry == "LONG":
-                    ema_aligned = ema_now > ema_prev
-                else:
-                    ema_aligned = ema_now < ema_prev
-            else:
-                ema_aligned = False
-
-            # Kenmerk 2: volumebevestiging (waar beschikbaar)
-            volume_confirmed = False
-            if use_volume and "Volume" in df.columns:
-                avg_volume = df["Volume"].iloc[i - 20: i].mean()
-                if not pd.isna(avg_volume) and avg_volume > 0:
-                    volume_confirmed = row["Volume"] > volume_multiplier * avg_volume
-
-            # Kenmerk 3: hoe overtuigend is de uitbraak (in ATR's voorbij het kanaal)?
-            if entry == "LONG":
-                breakout_strength_atr = round((row["Close"] - row["Donchian_upper"]) / row["ATR"], 3)
-            else:
-                breakout_strength_atr = round((row["Donchian_lower"] - row["Close"]) / row["ATR"], 3)
+            ema_aligned, volume_confirmed, breakout_strength_atr = _compute_features(df, i, entry)
 
             position = {
                 "pair": pair,
@@ -151,7 +169,6 @@ def simulate_donchian_trades(df, pair, atr_multiplier, rr,
                 "entry_bar": i,
                 "ema_aligned": ema_aligned,
                 "volume_confirmed": volume_confirmed,
-                "volume_used": use_volume,
                 "breakout_strength_atr": breakout_strength_atr,
             }
 
@@ -170,11 +187,12 @@ def check_latest_donchian_signal(df, atr_multiplier, rr, ema_slope_lookback=5, v
     Checkt ALLEEN de laatste dag van de data op een Donchian-signaal.
     Voor gebruik in de live scanner.
 
-    Geeft UITSLUITEND LONG-signalen terug - uit uitgebreid backtesten
-    (213 markten, meerdere filters, out-of-sample over twee periodes)
-    bleek LONG-only de sterkste en meest stabiele combinatie, terwijl
-    SHORT structureel verlieslatend was. Dit is een bewuste, data-
-    gedreven keuze.
+    Past de VOLLEDIG GEVALIDEERDE filters toe:
+    - Uitsluitend LONG (SHORT structureel verlieslatend)
+    - EMA21 moet in dezelfde richting lopen (ema_aligned)
+    - Uitbraaksterkte >= 0.75 ATR (MIN_BREAKOUT_STRENGTH_ATR)
+
+    Geeft None terug als niet aan ALLE eisen wordt voldaan.
     """
 
     i = len(df) - 1
@@ -192,19 +210,16 @@ def check_latest_donchian_signal(df, atr_multiplier, rr, ema_slope_lookback=5, v
     if pd.isna(row["ATR"]) or row["ATR"] <= 0:
         return None
 
+    ema_aligned, volume_confirmed, breakout_strength_atr = _compute_features(df, i, entry)
+
+    if not ema_aligned:
+        return None
+
+    if breakout_strength_atr < MIN_BREAKOUT_STRENGTH_ATR:
+        return None
+
     stop_loss = calculate_stop_loss(row["Close"], row["ATR"], atr_multiplier, entry)
     take_profit = calculate_take_profit(row["Close"], stop_loss, rr, entry)
-
-    use_volume = has_reliable_volume(df)
-    volume_confirmed = False
-    if use_volume and "Volume" in df.columns:
-        avg_volume = df["Volume"].iloc[i - 20: i].mean()
-        if not pd.isna(avg_volume) and avg_volume > 0:
-            volume_confirmed = row["Volume"] > volume_multiplier * avg_volume
-
-    ema_prev = df["EMA21"].iloc[i - ema_slope_lookback]
-    ema_now = row["EMA21"]
-    ema_aligned = ema_now > ema_prev
 
     return {
         "direction": entry,
@@ -213,5 +228,6 @@ def check_latest_donchian_signal(df, atr_multiplier, rr, ema_slope_lookback=5, v
         "take_profit": take_profit,
         "ema_aligned": ema_aligned,
         "volume_confirmed": volume_confirmed,
+        "breakout_strength_atr": breakout_strength_atr,
         "data_date": df.index[i],
     }
