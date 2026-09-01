@@ -13,14 +13,16 @@ from utils.pullback_strategy import check_latest_pullback_signal
 from utils.donchian_strategy import check_latest_donchian_signal
 from utils.donchian_indicator import add_donchian_channels
 from utils.tdi_shark_fin_strategy import check_recent_persistent_bias_signals, check_open_persistent_bias_position, add_tdi_indicators, add_long_term_emas
+from utils.fvg_watch import add_fvg, check_recent_fvg_signals
 
 
 print("\033c", end="")
 
 print("===================================")
-print("      FOREX SCANNER v8.0")
-print("      ALLE 4 STRATEGIEËN ACTIEF")
+print("      FOREX SCANNER v9.0")
+print("      4 STRATEGIEËN + FVG WATCH")
 print("      Breakout + Pullback + Donchian + TDI Bias")
+print("      (+ FVG Watch: puur informatief, geen strategie)")
 print("===================================")
 
 
@@ -32,6 +34,19 @@ ENABLE_BREAKOUT_WATCH = True
 ENABLE_PULLBACK_WATCH = True
 ENABLE_DONCHIAN_WATCH = True
 ENABLE_SHARK_FIN_WATCH = True
+ENABLE_FVG_WATCH = True
+
+# Hoeveel dagen terug de FVG Watch kijkt naar nieuw ontstane gaps
+FVG_LOOKBACK_DAYS = 5
+
+# Minimale gap-grootte in ATR om ruis te filteren - was ongefilterd
+# (0.0) en gaf te veel signalen. 0.5 ATR is een redelijk startpunt,
+# zelf verder aan te passen (hoger = strenger/minder signalen).
+FVG_MIN_GAP_SIZE_ATR = 0.5
+
+# Crypto uitsluiten van de FVG Watch (net als bij TDI) - crypto's
+# volatiliteit genereert onevenredig veel gaps
+FVG_EXCLUDE_CRYPTO = True
 
 TDI_EXCLUDE_CRYPTO = True
 
@@ -152,7 +167,7 @@ def analyse(pair):
 
 
         if df.empty or len(df) < 150:
-            return None, None, None, None, None
+            return None, None, None, None, None, None
 
 
         asset_class = get_asset_class(pair)
@@ -331,12 +346,44 @@ def analyse(pair):
                     "Dagen open": open_pos["days_open"],
                 }
 
-        return breakout_result, pullback_result, donchian_result, shark_results_for_pair, open_position_result
+        # =====================================
+        # FVG WATCH - PUUR INFORMATIEF, geen trade-strategie. Toont
+        # waar recent een Fair Value Gap is ontstaan, zodat je zelf
+        # kunt monitoren hoe de prijs zich daarna gedraagt.
+        # =====================================
+        fvg_results_for_pair = []
+
+        if ENABLE_FVG_WATCH and not (FVG_EXCLUDE_CRYPTO and asset_class == "crypto"):
+
+            df_prepared = add_fvg(df_prepared)
+
+            fvg_signals = check_recent_fvg_signals(
+                df_prepared,
+                lookback_days=FVG_LOOKBACK_DAYS,
+                min_gap_size_atr=FVG_MIN_GAP_SIZE_ATR,
+            )
+
+            for fvg in fvg_signals:
+                fvg_results_for_pair.append({
+                    "Pair": clean_name,
+                    "Asset Class": asset_class,
+                    "Direction": fvg["direction"],
+                    "Zone laag": fvg["zone_low"],
+                    "Zone hoog": fvg["zone_high"],
+                    "Huidige prijs": fvg["current_price"],
+                    "Prijs in zone": fvg["price_in_zone"],
+                    "Gap grootte (ATR)": fvg.get("gap_size_atr"),
+                    "Dagen geleden": fvg["days_ago"],
+                    "Data datum": str(fvg["data_date"])[:10],
+                })
+
+        return breakout_result, pullback_result, donchian_result, shark_results_for_pair, open_position_result, fvg_results_for_pair
 
 
     except Exception:
 
-        return None, None, None, None, None
+        return None, None, None, None, None, None
+
 
 
 
@@ -346,6 +393,7 @@ pullback_results=[]
 donchian_results=[]
 shark_results=[]
 open_positions=[]
+fvg_results=[]
 
 
 crypto_note = " (crypto alleen uitgesloten voor TDI)" if TDI_EXCLUDE_CRYPTO else ""
@@ -356,7 +404,7 @@ for pair in SCAN_PAIRS:
     if DEBUG:
         print("Scan:", pair)
 
-    bo, pb, dc, sf, op = analyse(pair)
+    bo, pb, dc, sf, op, fvg = analyse(pair)
 
     if bo:
         breakout_results.append(bo)
@@ -372,6 +420,9 @@ for pair in SCAN_PAIRS:
 
     if op:
         open_positions.append(op)
+
+    if fvg:
+        fvg_results.extend(fvg)
 
 
 
@@ -620,6 +671,51 @@ if ENABLE_DONCHIAN_WATCH:
 else:
     print()
     print("📈 DONCHIAN WATCH - uitgeschakeld (ENABLE_DONCHIAN_WATCH=False)")
+
+
+# =====================================
+# 5. FVG WATCH - eigen bericht (PUUR INFORMATIEF, geen trade-strategie)
+# =====================================
+
+if ENABLE_FVG_WATCH:
+
+    print()
+    print("🔲 FVG WATCH (Fair Value Gaps - zelf monitoren, geen strategie)")
+    print("-----------------------------------")
+
+    fvg_message_lines = [header_line, "", "🔲 *FVG WATCH (zelf monitoren, geen kant-en-klare strategie)*"]
+
+    if fvg_results:
+
+        for r in fvg_results:
+
+            asset_tag = r["Asset Class"].upper()
+            richting_tag = "📈 Bullish gap" if r["Direction"] == "bullish" else "📉 Bearish gap"
+            dagen_tag = "vandaag" if r["Dagen geleden"] == 0 else f"{r['Dagen geleden']} dagen geleden"
+            zone_tag = "✅ Prijs is terug in de zone" if r["Prijs in zone"] else "⚪ Prijs nog niet terug in de zone"
+
+            print()
+            print(f"[{asset_tag}] {r['Pair']} - {richting_tag} ({dagen_tag})")
+            print(f"Zone       : {r['Zone laag']} - {r['Zone hoog']} ({r['Gap grootte (ATR)']} ATR)")
+            print(f"Huidige prijs: {r['Huidige prijs']}")
+            print(zone_tag)
+
+            fvg_message_lines.append("")
+            fvg_message_lines.append(f"[{asset_tag}] *{r['Pair']}* - {richting_tag} ({dagen_tag})")
+            fvg_message_lines.append(f"Zone : {r['Zone laag']} - {r['Zone hoog']} ({r['Gap grootte (ATR)']} ATR)")
+            fvg_message_lines.append(f"Huidige prijs : {r['Huidige prijs']}")
+            fvg_message_lines.append(zone_tag)
+
+    else:
+
+        print("Geen nieuwe FVG's")
+        fvg_message_lines.append("Geen nieuwe FVG's")
+
+    send_telegram_message("\n".join(fvg_message_lines))
+
+else:
+    print()
+    print("🔲 FVG WATCH - uitgeschakeld (ENABLE_FVG_WATCH=False)")
 
 
 print()
