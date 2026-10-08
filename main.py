@@ -269,10 +269,13 @@ def analyse(pair, df_override=None, asset_class_override=None, name_override=Non
                     "TP afstand": bo_tp_distance,
                     "SL pips (indicatief)": calc_pips(asset_class, pair, bo_sl_distance),
                     "TP pips (indicatief)": calc_pips(asset_class, pair, bo_tp_distance),
-                    "Volume bevestigd": breakout_signal["volume_confirmed"],
-                    "Volume vandaag": breakout_signal["volume_today"],
-                    "Volume gem. 20d": breakout_signal["avg_volume_20d"],
-                    "Volume ratio": breakout_signal["volume_ratio"],
+                    # .get(): een signaal zonder volumegegevens (bv. forex, of
+                    # een paar zonder betrouwbaar volume) mag de verwerking niet
+                    # laten crashen - het wordt dan getoond als 'geen volumedata'
+                    "Volume bevestigd": breakout_signal.get("volume_confirmed", False),
+                    "Volume vandaag": breakout_signal.get("volume_today"),
+                    "Volume gem. 20d": breakout_signal.get("avg_volume_20d"),
+                    "Volume ratio": breakout_signal.get("volume_ratio"),
                     "Data datum": str(breakout_signal["data_date"])[:10],
                     "Position size": bo_position_size,
                 }
