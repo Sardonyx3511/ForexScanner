@@ -173,7 +173,7 @@ def clean_pair_name(pair):
     """Geeft een leesbare naam terug voor een ticker, ongeacht het type."""
     if pair in FRIENDLY_NAMES:
         return FRIENDLY_NAMES[pair]
-    return pair.replace("=X", "").replace("-USD", "USD")
+    return pair.replace("=X", "").replace("-USD", "USDT")
 
 
 def get_asset_class(pair):

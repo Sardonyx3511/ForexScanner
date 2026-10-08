@@ -21,3 +21,6 @@ scan_resultaat.csv
 breakout_resultaat.csv
 pullback_resultaat.csv
 donchian_resultaat.csv
+backtest_data/
+uitvoer.txt
+weex_top_pairs.csv

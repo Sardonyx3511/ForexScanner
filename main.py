@@ -14,15 +14,17 @@ from utils.donchian_strategy import check_latest_donchian_signal
 from utils.donchian_indicator import add_donchian_channels
 from utils.tdi_shark_fin_strategy import check_recent_persistent_bias_signals, check_open_persistent_bias_position, add_tdi_indicators, add_long_term_emas
 from utils.fvg_watch import add_fvg, check_recent_fvg_signals
+from utils.weex_data import fetch_weex_crypto_data
 
 
 print("\033c", end="")
 
 print("===================================")
-print("      FOREX SCANNER v9.0")
-print("      4 STRATEGIEËN + FVG WATCH")
-print("      Breakout + Pullback + Donchian + TDI Bias")
-print("      (+ FVG Watch: puur informatief, geen strategie)")
+print("      FOREX SCANNER v9.3")
+print("      3 STRATEGIEËN ACTIEF")
+print("      Breakout + Pullback + Donchian")
+print("      Crypto: Weex perpetuals (top 100 op volume)")
+print("      (TDI Bias en FVG Watch tijdelijk uit)")
 print("===================================")
 
 
@@ -33,24 +35,74 @@ SHARK_FIN_LOOKBACK_DAYS = 5
 ENABLE_BREAKOUT_WATCH = True
 ENABLE_PULLBACK_WATCH = True
 ENABLE_DONCHIAN_WATCH = True
-ENABLE_SHARK_FIN_WATCH = True
-ENABLE_FVG_WATCH = True
+ENABLE_SHARK_FIN_WATCH = False
+ENABLE_FVG_WATCH = False
 
-# Hoeveel dagen terug de FVG Watch kijkt naar nieuw ontstane gaps
 FVG_LOOKBACK_DAYS = 5
-
-# Minimale gap-grootte in ATR om ruis te filteren - was ongefilterd
-# (0.0) en gaf te veel signalen. 0.5 ATR is een redelijk startpunt,
-# zelf verder aan te passen (hoger = strenger/minder signalen).
 FVG_MIN_GAP_SIZE_ATR = 0.5
-
-# Crypto uitsluiten van de FVG Watch (net als bij TDI) - crypto's
-# volatiliteit genereert onevenredig veel gaps
 FVG_EXCLUDE_CRYPTO = True
+FVG_SHELF_LOOKBACK = 50
 
 TDI_EXCLUDE_CRYPTO = True
 
-SCAN_PAIRS = ALL_PAIRS
+# Crypto alleen downloaden als minstens één ACTIEVE strategie het ook
+# daadwerkelijk gebruikt (breakout/pullback/Donchian gebruiken crypto
+# wél als ze aanstaan; TDI en FVG sluiten crypto altijd uit) - zo
+# voorkomt je nodeloze downloads (en 'delisted'-foutmeldingen) van
+# crypto-paren terwijl geen enkele actieve strategie ze gebruikt.
+_needs_crypto = ENABLE_BREAKOUT_WATCH or ENABLE_PULLBACK_WATCH or ENABLE_DONCHIAN_WATCH
+
+# ============================================
+# CRYPTO-BRON
+# Crypto komt van Weex (perpetual futures, waar je ook daadwerkelijk
+# handelt): de top WEEX_TOP_N echte crypto-paren op 24-uurs volume.
+# Aandelen/ETF's/metalen die Weex ook als perpetual lijst worden
+# eruit gefilterd (zie utils/weex_data.py). Als Weex niet bereikbaar
+# is, valt de scan terug op de oude yfinance-cryptolijst.
+# Zet USE_WEEX_FOR_CRYPTO op False om altijd yfinance te gebruiken.
+# ============================================
+USE_WEEX_FOR_CRYPTO = True
+WEEX_TOP_N = 100
+WEEX_MIN_DAYS = 150
+
+_non_crypto_pairs = [p for p in ALL_PAIRS if get_asset_class(p) != "crypto"]
+_yf_crypto_pairs = [p for p in ALL_PAIRS if get_asset_class(p) == "crypto"]
+
+weex_crypto_data = {}
+_crypto_note = ""
+
+if _needs_crypto and USE_WEEX_FOR_CRYPTO:
+
+    try:
+        weex_crypto_data, _weex_stats = fetch_weex_crypto_data(
+            top_n=WEEX_TOP_N,
+            min_days=WEEX_MIN_DAYS,
+        )
+
+        print(
+            f"Weex crypto: {_weex_stats['geladen']} paren geladen "
+            f"(van {_weex_stats['crypto']} crypto-perpetuals; "
+            f"{_weex_stats['niet_crypto_uitgesloten']} aandelen/ETF's/metalen uitgesloten, "
+            f"{_weex_stats['te_kort']} te weinig geschiedenis, "
+            f"{_weex_stats['fout']} ophaalfouten)"
+        )
+
+        if not weex_crypto_data:
+            print("⚠️  Weex gaf geen bruikbare crypto-paren terug - terugval op yfinance-cryptolijst.")
+
+    except Exception as e:
+        print(f"⚠️  Weex niet bereikbaar ({type(e).__name__}: {e}) - terugval op yfinance-cryptolijst.")
+        weex_crypto_data = {}
+
+SCAN_PAIRS = list(_non_crypto_pairs)
+
+if _needs_crypto and not weex_crypto_data:
+    SCAN_PAIRS += _yf_crypto_pairs
+    _crypto_note = " (crypto via yfinance)"
+elif _needs_crypto:
+    _crypto_note = f" + {len(weex_crypto_data)} crypto-perpetuals via Weex"
+else:
+    _crypto_note = " (crypto niet gedownload - geen actieve strategie gebruikt het)"
 
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -153,25 +205,34 @@ def calc_pips(asset_class, pair, distance):
     return round(distance / pip_size, 1)
 
 
-def analyse(pair):
+def analyse(pair, df_override=None, asset_class_override=None, name_override=None):
+    """
+    Normaal haalt analyse() de data zelf op via yfinance. Voor Weex-crypto
+    wordt de data al eerder opgehaald en meegegeven via df_override (met
+    asset_class_override en name_override, omdat Weex-symbolen niet in de
+    config-lijsten staan).
+    """
 
     try:
 
-        df=yf.download(
-            pair,
-            period="5y",
-            interval="1d",
-            multi_level_index=False,
-            progress=False
-        )
+        if df_override is not None:
+            df = df_override.copy()
+        else:
+            df=yf.download(
+                pair,
+                period="5y",
+                interval="1d",
+                multi_level_index=False,
+                progress=False
+            )
 
 
         if df.empty or len(df) < 150:
             return None, None, None, None, None, None
 
 
-        asset_class = get_asset_class(pair)
-        clean_name = clean_pair_name(pair)
+        asset_class = asset_class_override or get_asset_class(pair)
+        clean_name = name_override or clean_pair_name(pair)
 
         df_prepared = prepare_breakout_data(df, rsi_window=RSI_WINDOW, ema_span=EMA_SPAN)
         df_prepared = add_donchian_channels(df_prepared, window=20)
@@ -346,11 +407,6 @@ def analyse(pair):
                     "Dagen open": open_pos["days_open"],
                 }
 
-        # =====================================
-        # FVG WATCH - PUUR INFORMATIEF, geen trade-strategie. Toont
-        # waar recent een Fair Value Gap is ontstaan, zodat je zelf
-        # kunt monitoren hoe de prijs zich daarna gedraagt.
-        # =====================================
         fvg_results_for_pair = []
 
         if ENABLE_FVG_WATCH and not (FVG_EXCLUDE_CRYPTO and asset_class == "crypto"):
@@ -361,6 +417,7 @@ def analyse(pair):
                 df_prepared,
                 lookback_days=FVG_LOOKBACK_DAYS,
                 min_gap_size_atr=FVG_MIN_GAP_SIZE_ATR,
+                shelf_lookback=FVG_SHELF_LOOKBACK,
             )
 
             for fvg in fvg_signals:
@@ -373,6 +430,8 @@ def analyse(pair):
                     "Huidige prijs": fvg["current_price"],
                     "Prijs in zone": fvg["price_in_zone"],
                     "Gap grootte (ATR)": fvg.get("gap_size_atr"),
+                    "Heeft shelf": fvg.get("has_shelf", False),
+                    "Shelf dagen terug": fvg.get("shelf_days_back"),
                     "Dagen geleden": fvg["days_ago"],
                     "Data datum": str(fvg["data_date"])[:10],
                 })
@@ -380,10 +439,10 @@ def analyse(pair):
         return breakout_result, pullback_result, donchian_result, shark_results_for_pair, open_position_result, fvg_results_for_pair
 
 
-    except Exception:
+    except Exception as e:
 
+        print(f"  ⚠️ FOUT bij {pair}: {type(e).__name__}: {e}")
         return None, None, None, None, None, None
-
 
 
 
@@ -396,15 +455,8 @@ open_positions=[]
 fvg_results=[]
 
 
-crypto_note = " (crypto alleen uitgesloten voor TDI)" if TDI_EXCLUDE_CRYPTO else ""
-print(f"Scannen van {len(SCAN_PAIRS)} markten{crypto_note}...")
-
-for pair in SCAN_PAIRS:
-
-    if DEBUG:
-        print("Scan:", pair)
-
-    bo, pb, dc, sf, op, fvg = analyse(pair)
+def collect_results(bo, pb, dc, sf, op, fvg):
+    """Voegt de uitkomst van analyse() toe aan de resultaatlijsten."""
 
     if bo:
         breakout_results.append(bo)
@@ -423,6 +475,30 @@ for pair in SCAN_PAIRS:
 
     if fvg:
         fvg_results.extend(fvg)
+
+
+print(f"Scannen van {len(SCAN_PAIRS)} markten{_crypto_note}...")
+
+for pair in SCAN_PAIRS:
+
+    if DEBUG:
+        print("Scan:", pair)
+
+    collect_results(*analyse(pair))
+
+
+# Weex-crypto: data is al opgehaald, dus geen download per paar
+for symbol, (base_name, weex_df) in weex_crypto_data.items():
+
+    if DEBUG:
+        print("Scan (Weex):", symbol)
+
+    collect_results(*analyse(
+        symbol,
+        df_override=weex_df,
+        asset_class_override="crypto",
+        name_override=f"{base_name}-PERP",
+    ))
 
 
 
@@ -457,10 +533,6 @@ print("===================================")
 
 header_line = f"📱 *DAILY REPORT* - {scan_date}"
 
-
-# =====================================
-# 1. BREAKOUT WATCH - eigen bericht
-# =====================================
 
 if ENABLE_BREAKOUT_WATCH:
 
@@ -511,10 +583,6 @@ else:
     print("🚀 BREAKOUT WATCH - uitgeschakeld (ENABLE_BREAKOUT_WATCH=False)")
 
 
-# =====================================
-# 2. PULLBACK WATCH - eigen bericht
-# =====================================
-
 if ENABLE_PULLBACK_WATCH:
 
     print()
@@ -558,10 +626,6 @@ else:
     print("🔻 PULLBACK WATCH - uitgeschakeld (ENABLE_PULLBACK_WATCH=False)")
 
 
-# =====================================
-# 3. TDI AANHOUDENDE BIAS WATCH - eigen bericht (nu VOOR Donchian)
-# =====================================
-
 if ENABLE_SHARK_FIN_WATCH:
 
     print()
@@ -601,8 +665,6 @@ if ENABLE_SHARK_FIN_WATCH:
         print("Geen nieuwe signalen")
         shark_message_lines.append("Geen nieuwe signalen")
 
-    # Open-posities-overzicht, gesorteerd van NIEUWSTE naar OUDSTE
-    # (dus de langst-lopende posities staan onderaan)
     if open_positions:
 
         open_positions_sorted = sorted(
@@ -625,10 +687,6 @@ else:
     print()
     print("🦈 TDI AANHOUDENDE BIAS WATCH - uitgeschakeld (ENABLE_SHARK_FIN_WATCH=False)")
 
-
-# =====================================
-# 4. DONCHIAN WATCH - eigen bericht (nu NA TDI)
-# =====================================
 
 if ENABLE_DONCHIAN_WATCH:
 
@@ -673,10 +731,6 @@ else:
     print("📈 DONCHIAN WATCH - uitgeschakeld (ENABLE_DONCHIAN_WATCH=False)")
 
 
-# =====================================
-# 5. FVG WATCH - eigen bericht (PUUR INFORMATIEF, geen trade-strategie)
-# =====================================
-
 if ENABLE_FVG_WATCH:
 
     print()
@@ -698,12 +752,16 @@ if ENABLE_FVG_WATCH:
             print(f"[{asset_tag}] {r['Pair']} - {richting_tag} ({dagen_tag})")
             print(f"Zone       : {r['Zone laag']} - {r['Zone hoog']} ({r['Gap grootte (ATR)']} ATR)")
             print(f"Huidige prijs: {r['Huidige prijs']}")
+            if r["Heeft shelf"]:
+                print(f"🟨 Shelf-confluence: historisch reactieniveau {r['Shelf dagen terug']} dagen eerder op dezelfde zone")
             print(zone_tag)
 
             fvg_message_lines.append("")
             fvg_message_lines.append(f"[{asset_tag}] *{r['Pair']}* - {richting_tag} ({dagen_tag})")
             fvg_message_lines.append(f"Zone : {r['Zone laag']} - {r['Zone hoog']} ({r['Gap grootte (ATR)']} ATR)")
             fvg_message_lines.append(f"Huidige prijs : {r['Huidige prijs']}")
+            if r["Heeft shelf"]:
+                fvg_message_lines.append(f"🟨 Shelf: {r['Shelf dagen terug']}d eerder al reactieniveau op deze zone")
             fvg_message_lines.append(zone_tag)
 
     else:

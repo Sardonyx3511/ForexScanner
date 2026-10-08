@@ -1,10 +1,17 @@
 """
 Fair Value Gap (FVG) Watch - puur informatief, GEEN kant-en-klare
-trade-strategie. Detecteert waar recent een FVG/imbalance is ontstaan,
-zodat je zelf kunt monitoren hoe de prijs zich daarna gedraagt.
+trade-strategie. Detecteert waar recent een FVG/imbalance is ontstaan.
 
 Bullish FVG (bij i): Low[i] > High[i-2]
 Bearish FVG (bij i): High[i] < Low[i-2]
+
+SHELF-CONFLUENCE (extra kenmerk, geen harde eis):
+Kijkt terug (vóór de gap ontstond) of er een historisch punt was
+(een High of Low van een eerdere candle) dat precies binnen dezelfde
+prijszone lag als de huidige FVG. Als dat zo is, heeft die zone eerder
+al als reactieniveau gefungeerd - een soort bevestigd 'plateau', wat de
+FVG mogelijk sterker maakt. Puur getrackt, nog niet als harde filter
+toegepast.
 """
 
 import pandas as pd
@@ -12,8 +19,7 @@ import pandas as pd
 
 def add_fvg(df):
     """
-    Detecteert Fair Value Gaps op elke dag. Voegt kolommen toe met de
-    FVG-zone (boven/ondergrens), NaN als er geen FVG is op die dag.
+    Detecteert Fair Value Gaps op elke dag.
     """
 
     df["FVG_bullish_low"] = float("nan")
@@ -39,18 +45,40 @@ def add_fvg(df):
     return df
 
 
-def check_recent_fvg_signals(df, lookback_days=5, min_gap_size_atr=0.0):
+def _check_shelf_confluence(df, gap_index, zone_low, zone_high, lookback=50):
+    """
+    Kijkt terug vanaf VOOR de gap ontstond of er een eerdere candle-
+    High of -Low precies in [zone_low, zone_high] valt.
+
+    Geeft (heeft_shelf: bool, dagen_terug: int of None) terug.
+    """
+
+    start = max(0, gap_index - 2 - lookback)
+    end = gap_index - 2
+
+    if end <= start:
+        return False, None
+
+    match_indices = []
+
+    for idx in range(start, end):
+        h = df["High"].iloc[idx]
+        l = df["Low"].iloc[idx]
+        if zone_low <= h <= zone_high or zone_low <= l <= zone_high:
+            match_indices.append(idx)
+
+    if not match_indices:
+        return False, None
+
+    most_recent_match = max(match_indices)
+    days_back = (gap_index - 2) - most_recent_match
+
+    return True, days_back
+
+
+def check_recent_fvg_signals(df, lookback_days=5, min_gap_size_atr=0.0, shelf_lookback=50):
     """
     Checkt de laatste 'lookback_days' dagen op nieuw ontstane FVG's.
-
-    min_gap_size_atr: filtert kleine, waarschijnlijk onbeduidende gaps
-    eruit - een gap moet minstens dit veelvoud van de ATR groot zijn
-    om meegenomen te worden. 0.0 = geen filter (alles tonen). Vereist
-    een 'ATR'-kolom in df.
-
-    Geeft een lijst terug (kan leeg zijn), met per FVG: richting,
-    zone-grenzen, hoeveel dagen geleden, en of de huidige prijs al
-    (deels) in de zone is teruggekeerd.
     """
 
     results = []
@@ -70,48 +98,39 @@ def check_recent_fvg_signals(df, lookback_days=5, min_gap_size_atr=0.0):
 
         atr_value = row["ATR"] if "ATR" in df.columns and not pd.isna(row["ATR"]) else None
 
-        if not pd.isna(row["FVG_bullish_low"]):
+        for direction, low_col, high_col in [
+            ("bullish", "FVG_bullish_low", "FVG_bullish_high"),
+            ("bearish", "FVG_bearish_low", "FVG_bearish_high"),
+        ]:
 
-            zone_low = row["FVG_bullish_low"]
-            zone_high = row["FVG_bullish_high"]
+            if pd.isna(row[low_col]):
+                continue
+
+            zone_low = row[low_col]
+            zone_high = row[high_col]
             gap_size = zone_high - zone_low
             gap_size_atr = round(gap_size / atr_value, 2) if atr_value and atr_value > 0 else None
 
-            if min_gap_size_atr <= 0 or (gap_size_atr is not None and gap_size_atr >= min_gap_size_atr):
+            if min_gap_size_atr > 0 and (gap_size_atr is None or gap_size_atr < min_gap_size_atr):
+                continue
 
-                price_in_zone = zone_low <= current_close <= zone_high
+            has_shelf, shelf_days_back = _check_shelf_confluence(
+                df, i, zone_low, zone_high, lookback=shelf_lookback
+            )
 
-                results.append({
-                    "direction": "bullish",
-                    "zone_low": round(zone_low, 5),
-                    "zone_high": round(zone_high, 5),
-                    "gap_size_atr": gap_size_atr,
-                    "data_date": df.index[i],
-                    "days_ago": days_ago,
-                    "price_in_zone": price_in_zone,
-                    "current_price": round(current_close, 5),
-                })
+            price_in_zone = zone_low <= current_close <= zone_high
 
-        if not pd.isna(row["FVG_bearish_low"]):
-
-            zone_low = row["FVG_bearish_low"]
-            zone_high = row["FVG_bearish_high"]
-            gap_size = zone_high - zone_low
-            gap_size_atr = round(gap_size / atr_value, 2) if atr_value and atr_value > 0 else None
-
-            if min_gap_size_atr <= 0 or (gap_size_atr is not None and gap_size_atr >= min_gap_size_atr):
-
-                price_in_zone = zone_low <= current_close <= zone_high
-
-                results.append({
-                    "direction": "bearish",
-                    "zone_low": round(zone_low, 5),
-                    "zone_high": round(zone_high, 5),
-                    "gap_size_atr": gap_size_atr,
-                    "data_date": df.index[i],
-                    "days_ago": days_ago,
-                    "price_in_zone": price_in_zone,
-                    "current_price": round(current_close, 5),
-                })
+            results.append({
+                "direction": direction,
+                "zone_low": round(zone_low, 5),
+                "zone_high": round(zone_high, 5),
+                "gap_size_atr": gap_size_atr,
+                "data_date": df.index[i],
+                "days_ago": days_ago,
+                "price_in_zone": price_in_zone,
+                "current_price": round(current_close, 5),
+                "has_shelf": has_shelf,
+                "shelf_days_back": shelf_days_back,
+            })
 
     return results

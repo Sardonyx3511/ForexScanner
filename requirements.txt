@@ -2,3 +2,4 @@ yfinance
 ta
 pandas
 requests
+ccxt
