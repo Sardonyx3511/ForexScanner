@@ -137,7 +137,10 @@ def check_latest_breakout_signal(df, atr_multiplier, rr, squeeze_method="percent
     consistent blijven.
 
     Geeft een dict terug met entry/SL/TP-info, of None als er geen
-    signaal is.
+    signaal is. Het dict bevat ook de volumegegevens en de datum die
+    main.py in het bericht toont (volume_today, avg_volume_20d,
+    volume_ratio, data_date) - die zijn None als er geen betrouwbare
+    volumedata is (bv. forex).
     """
 
     i = len(df) - 1
@@ -163,13 +166,34 @@ def check_latest_breakout_signal(df, atr_multiplier, rr, squeeze_method="percent
     stop_loss = calculate_stop_loss(row["Close"], row["ATR"], atr_multiplier, entry)
     take_profit = calculate_take_profit(row["Close"], stop_loss, rr, entry)
 
+    # Volumegegevens voor in het bericht (zelfde berekening als in de
+    # signaallogica: gemiddelde van de 20 dagen vóór vandaag)
+    volume_today = None
+    avg_volume_20d = None
+    volume_ratio = None
+
+    if use_volume:
+        avg_volume = df["Volume"].iloc[i - 20: i].mean()
+        today_volume = row["Volume"]
+
+        if not pd.isna(avg_volume) and avg_volume > 0 and not pd.isna(today_volume):
+            volume_today = round(float(today_volume), 2)
+            avg_volume_20d = round(float(avg_volume), 2)
+            volume_ratio = round(float(today_volume) / float(avg_volume), 2)
+
     return {
         "direction": entry,
         "entry_price": row["Close"],
         "stop_loss": stop_loss,
         "take_profit": take_profit,
         "volume_confirmed": use_volume,
+        "volume_today": volume_today,
+        "avg_volume_20d": avg_volume_20d,
+        "volume_ratio": volume_ratio,
+        "data_date": df.index[i],
     }
+
+
 def simulate_breakout_trades(df, pair, atr_multiplier, rr,
                               squeeze_method="percentile",
                               squeeze_percentile=20, squeeze_lookback=100,
